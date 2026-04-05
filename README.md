@@ -2,7 +2,20 @@
 
 A tmux sidebar that monitors all AI coding agents (Claude Code, Codex) across every session and window — statuses, prompts, git info, activity logs, and more in one place.
 
-<!-- TODO: screenshot -->
+## Screenshots
+
+![main](assets/main.png)
+
+<table>
+  <tr>
+    <td><img src="assets/category.png" alt="category view" /></td>
+    <td><img src="assets/filter-by-project.png" alt="filter by project" /></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Category view</b></td>
+    <td align="center"><b>Filter by project</b></td>
+  </tr>
+</table>
 
 ## Features
 
