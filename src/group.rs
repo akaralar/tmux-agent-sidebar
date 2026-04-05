@@ -150,11 +150,11 @@ mod tests {
         let info = resolve_pane_git_info(env!("CARGO_MANIFEST_DIR"));
         assert!(info.repo_root.is_some(), "should detect git repo");
         assert!(info.branch.is_some(), "should detect branch");
-        // The repo root should be the dotfiles dir (parent of config/tmux-agent-sidebar)
+        // The repo root should be the tmux-agent-sidebar repo
         let root = info.repo_root.unwrap();
         assert!(
-            root.contains("dotfiles"),
-            "repo root should be dotfiles: {}",
+            root.contains("tmux-agent-sidebar"),
+            "repo root should be tmux-agent-sidebar: {}",
             root
         );
     }
@@ -266,7 +266,7 @@ mod tests {
 
         assert_eq!(groups.len(), 1);
         assert_eq!(
-            groups[0].name, "dotfiles",
+            groups[0].name, "tmux-agent-sidebar",
             "display name should be repo basename"
         );
     }
