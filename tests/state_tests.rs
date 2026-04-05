@@ -481,10 +481,7 @@ fn test_filter_change_rebuilds_row_targets() {
         ..make_pane(AgentType::Claude, PaneStatus::Idle)
     };
     let mut state = make_state(vec![]);
-    state.repo_groups = vec![make_repo_group(
-        "project",
-        vec![running_pane, idle_pane],
-    )];
+    state.repo_groups = vec![make_repo_group("project", vec![running_pane, idle_pane])];
 
     // All filter shows both
     state.agent_filter = AgentFilter::All;

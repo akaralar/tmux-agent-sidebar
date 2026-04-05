@@ -330,12 +330,7 @@ fn parse_subagents(raw: &str) -> Vec<String> {
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
-    items
-        .iter()
-        .map(|item| {
-            item.to_string()
-        })
-        .collect()
+    items.iter().map(|item| item.to_string()).collect()
 }
 
 pub fn get_sidebar_pane_info(tmux_pane: &str) -> (bool, u16, u16) {

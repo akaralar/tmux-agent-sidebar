@@ -25,9 +25,7 @@ fn clear_run_state(pane: &str) {
 
 /// Check if a prompt is a system-injected message (not a real user prompt).
 fn is_system_message(s: &str) -> bool {
-    s.contains("<task-notification>")
-        || s.contains("<system-reminder>")
-        || s.contains("<task-")
+    s.contains("<task-notification>") || s.contains("<system-reminder>") || s.contains("<task-")
 }
 
 fn clear_all_meta(pane: &str) {
