@@ -152,41 +152,49 @@ fn walking_left_2() -> Vec<Line<'static>> {
 }
 
 /// Working sprite 1: cat facing right, arm down.
+/// Ear connects to head via bg color. Feet connect to chair via bg color.
 fn working_sprite_1() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::raw(" "),
+        ]),
+        Line::from(vec![
+            Span::styled("▄", Style::new().fg(CAT_BODY).bg(CAT_BODY)),
             Span::styled("▄", Style::new().fg(CAT_BODY)),
         ]),
         Line::from(vec![
+            Span::raw(" "),
             Span::styled("█", Style::new().fg(CAT_BODY)),
             Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("█", Style::new().fg(CAT_BODY)),
             Span::styled("╴", Style::new().fg(CAT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▀▀▀", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+            Span::styled("▀▀", Style::new().fg(CAT_BODY).bg(CHAIR_COLOR)),
         ]),
     ]
 }
 
 /// Working sprite 2: cat facing right, arm extended.
+/// Ear connects to head via bg color. Feet connect to chair via bg color.
 fn working_sprite_2() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::raw(" "),
+        ]),
+        Line::from(vec![
+            Span::styled("▄", Style::new().fg(CAT_BODY).bg(CAT_BODY)),
             Span::styled("▄", Style::new().fg(CAT_BODY)),
         ]),
         Line::from(vec![
+            Span::raw(" "),
             Span::styled("█", Style::new().fg(CAT_BODY)),
             Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("█", Style::new().fg(CAT_BODY)),
             Span::styled("─", Style::new().fg(CAT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▀▀▀", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+            Span::styled("▀▀", Style::new().fg(CAT_BODY).bg(CHAIR_COLOR)),
         ]),
     ]
 }
@@ -400,9 +408,9 @@ mod tests {
         state.cat_frame = 1;
         let output = render_cat_scene(&state, 2, panel_width, 14);
         let expected = [
-            "                                ▄ ▄  ▐█▌",
-            "                                █▀█╴ ▐█▌",
-            "                                ▀▀▀ ████",
+            "                                ▄▄▄  ▐█▌",
+            "                                 █▀╴ ▐█▌",
+            "                                 ▀▀ ████",
             "                                 ██ █  █",
         ].join("\n");
         assert_eq!(output, expected);
