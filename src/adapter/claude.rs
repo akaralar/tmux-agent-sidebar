@@ -1,7 +1,39 @@
-use crate::event::{AgentEvent, EventAdapter};
+use crate::event::{AgentEvent, EventAdapter, WorktreeInfo};
 use serde_json::Value;
 
 use super::json_str;
+
+/// Parse optional worktree object from hook payload.
+/// Returns None if the "worktree" field is missing or not an object.
+fn parse_worktree(input: &Value) -> Option<WorktreeInfo> {
+    let obj = input.get("worktree")?;
+    if !obj.is_object() {
+        return None;
+    }
+    let name = json_str(obj, "name");
+    let path = json_str(obj, "path");
+    let branch = json_str(obj, "branch");
+    let original = json_str(obj, "originalRepoDir");
+    if name.is_empty() && path.is_empty() && branch.is_empty() && original.is_empty() {
+        return None;
+    }
+    Some(WorktreeInfo {
+        name: name.into(),
+        path: path.into(),
+        branch: branch.into(),
+        original_repo_dir: original.into(),
+    })
+}
+
+/// Parse optional agent_id from hook payload.
+fn parse_agent_id(input: &Value) -> Option<String> {
+    let id = json_str(input, "agent_id");
+    if id.is_empty() {
+        None
+    } else {
+        Some(id.into())
+    }
+}
 
 fn parse_json_field(input: &Value, field: &str) -> Value {
     input
@@ -27,8 +59,8 @@ impl EventAdapter for ClaudeAdapter {
                 agent: "claude".into(),
                 cwd: json_str(input, "cwd").into(),
                 permission_mode: json_str(input, "permission_mode").into(),
-                worktree: None,
-                agent_id: None,
+                worktree: parse_worktree(input),
+                agent_id: parse_agent_id(input),
             }),
             "session-end" => Some(AgentEvent::SessionEnd),
             "user-prompt-submit" => Some(AgentEvent::UserPromptSubmit {
@@ -36,8 +68,8 @@ impl EventAdapter for ClaudeAdapter {
                 cwd: json_str(input, "cwd").into(),
                 permission_mode: json_str(input, "permission_mode").into(),
                 prompt: json_str(input, "prompt").into(),
-                worktree: None,
-                agent_id: None,
+                worktree: parse_worktree(input),
+                agent_id: parse_agent_id(input),
             }),
             "notification" => {
                 let wait_reason = json_str(input, "notification_type");
@@ -48,8 +80,8 @@ impl EventAdapter for ClaudeAdapter {
                     permission_mode: json_str(input, "permission_mode").into(),
                     wait_reason: wait_reason.into(),
                     meta_only,
-                    worktree: None,
-                    agent_id: None,
+                    worktree: parse_worktree(input),
+                    agent_id: parse_agent_id(input),
                 })
             }
             "stop" => Some(AgentEvent::Stop {
@@ -58,8 +90,8 @@ impl EventAdapter for ClaudeAdapter {
                 permission_mode: json_str(input, "permission_mode").into(),
                 last_message: json_str(input, "last_assistant_message").into(),
                 response: None,
-                worktree: None,
-                agent_id: None,
+                worktree: parse_worktree(input),
+                agent_id: parse_agent_id(input),
             }),
             "stop-failure" => {
                 let error_type = json_str(input, "error");
@@ -74,10 +106,22 @@ impl EventAdapter for ClaudeAdapter {
                     cwd: json_str(input, "cwd").into(),
                     permission_mode: json_str(input, "permission_mode").into(),
                     error: error.into(),
-                    worktree: None,
-                    agent_id: None,
+                    worktree: parse_worktree(input),
+                    agent_id: parse_agent_id(input),
                 })
             }
+            "permission-denied" => Some(AgentEvent::PermissionDenied {
+                agent: "claude".into(),
+                cwd: json_str(input, "cwd").into(),
+                permission_mode: json_str(input, "permission_mode").into(),
+                worktree: parse_worktree(input),
+                agent_id: parse_agent_id(input),
+            }),
+            "cwd-changed" => Some(AgentEvent::CwdChanged {
+                cwd: json_str(input, "cwd").into(),
+                worktree: parse_worktree(input),
+                agent_id: parse_agent_id(input),
+            }),
             "subagent-start" => {
                 let agent_type = json_str(input, "agent_type");
                 if agent_type.is_empty() {
@@ -388,6 +432,138 @@ mod tests {
                 agent_id: None,
             }
         );
+    }
+
+    #[test]
+    fn session_start_with_worktree_and_agent_id() {
+        let adapter = ClaudeAdapter;
+        let input = json!({
+            "cwd": "/tmp/wt",
+            "permission_mode": "auto",
+            "agent_id": "abc-123",
+            "worktree": {
+                "name": "feat-wt",
+                "path": "/tmp/wt",
+                "branch": "feat",
+                "originalRepoDir": "/home/user/repo"
+            }
+        });
+        let event = adapter.parse("session-start", &input).unwrap();
+        match event {
+            AgentEvent::SessionStart {
+                worktree, agent_id, ..
+            } => {
+                let wt = worktree.unwrap();
+                assert_eq!(wt.name, "feat-wt");
+                assert_eq!(wt.path, "/tmp/wt");
+                assert_eq!(wt.branch, "feat");
+                assert_eq!(wt.original_repo_dir, "/home/user/repo");
+                assert_eq!(agent_id.unwrap(), "abc-123");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn session_start_without_worktree_fields() {
+        let adapter = ClaudeAdapter;
+        let input = json!({"cwd": "/tmp", "permission_mode": "default"});
+        let event = adapter.parse("session-start", &input).unwrap();
+        match event {
+            AgentEvent::SessionStart {
+                worktree, agent_id, ..
+            } => {
+                assert!(worktree.is_none());
+                assert!(agent_id.is_none());
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn permission_denied_event() {
+        let adapter = ClaudeAdapter;
+        let input = json!({
+            "cwd": "/tmp",
+            "permission_mode": "auto",
+            "tool_name": "Bash",
+        });
+        let event = adapter.parse("permission-denied", &input).unwrap();
+        assert_eq!(
+            event,
+            AgentEvent::PermissionDenied {
+                agent: "claude".into(),
+                cwd: "/tmp".into(),
+                permission_mode: "auto".into(),
+                worktree: None,
+                agent_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn cwd_changed_event() {
+        let adapter = ClaudeAdapter;
+        let input = json!({"cwd": "/new/path"});
+        let event = adapter.parse("cwd-changed", &input).unwrap();
+        assert_eq!(
+            event,
+            AgentEvent::CwdChanged {
+                cwd: "/new/path".into(),
+                worktree: None,
+                agent_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn cwd_changed_with_worktree() {
+        let adapter = ClaudeAdapter;
+        let input = json!({
+            "cwd": "/tmp/wt/src",
+            "worktree": {
+                "name": "wt",
+                "path": "/tmp/wt",
+                "branch": "main",
+                "originalRepoDir": "/home/user/repo"
+            }
+        });
+        let event = adapter.parse("cwd-changed", &input).unwrap();
+        match event {
+            AgentEvent::CwdChanged { cwd, worktree, .. } => {
+                assert_eq!(cwd, "/tmp/wt/src");
+                let wt = worktree.unwrap();
+                assert_eq!(wt.original_repo_dir, "/home/user/repo");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn parse_worktree_empty_object_returns_none() {
+        let adapter = ClaudeAdapter;
+        let input = json!({"cwd": "/tmp", "permission_mode": "default", "worktree": {}});
+        let event = adapter.parse("session-start", &input).unwrap();
+        match event {
+            AgentEvent::SessionStart { worktree, .. } => {
+                assert!(worktree.is_none(), "empty worktree object should be None");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn parse_worktree_non_object_returns_none() {
+        let adapter = ClaudeAdapter;
+        let input =
+            json!({"cwd": "/tmp", "permission_mode": "default", "worktree": "not-an-object"});
+        let event = adapter.parse("session-start", &input).unwrap();
+        match event {
+            AgentEvent::SessionStart { worktree, .. } => {
+                assert!(worktree.is_none(), "non-object worktree should be None");
+            }
+            _ => panic!("wrong variant"),
+        }
     }
 
     #[test]
