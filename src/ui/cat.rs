@@ -55,6 +55,31 @@ fn sitting_sprite() -> Vec<Line<'static>> {
     ]
 }
 
+fn crouching_sprite() -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::styled("▐", Style::new().fg(CAT_BODY)),
+            Span::styled("█", Style::new().fg(CAT_BODY)),
+            Span::styled("▀", Style::new().fg(CAT_EYE)),
+            Span::styled("█", Style::new().fg(CAT_BODY)),
+            Span::styled("▌", Style::new().fg(CAT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::styled("▝", Style::new().fg(CAT_BODY)),
+            Span::styled("▀", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+            Span::styled("▀", Style::new().fg(CAT_BODY)),
+            Span::styled("▘", Style::new().fg(CAT_BODY)),
+        ]),
+    ]
+}
+
 fn walking_right_1() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
@@ -64,11 +89,11 @@ fn walking_right_1() -> Vec<Line<'static>> {
             Span::styled("▄", Style::new().fg(CAT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▐", Style::new().fg(CAT_BODY)),
             Span::styled("▀", Style::new().fg(CAT_EYE)),
             Span::styled("▀", Style::new().fg(CAT_NOSE)),
             Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▌", Style::new().fg(CAT_BODY)),
         ]),
         Line::from(vec![
             Span::styled("╶", Style::new().fg(CAT_BODY)),
@@ -88,11 +113,11 @@ fn walking_right_2() -> Vec<Line<'static>> {
             Span::styled("▄", Style::new().fg(CAT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▐", Style::new().fg(CAT_BODY)),
             Span::styled("▀", Style::new().fg(CAT_EYE)),
             Span::styled("▀", Style::new().fg(CAT_NOSE)),
             Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▌", Style::new().fg(CAT_BODY)),
         ]),
         Line::from(vec![
             Span::raw(" "),
@@ -211,7 +236,9 @@ pub fn draw_cat(frame: &mut Frame, state: &AppState, bottom_area: Rect, running_
 
     // --- Draw cat first (so desk/chair render on top if overlapping) ---
     let sprite_lines = match state.cat_state {
-        CatState::Idle => sitting_sprite(),
+        CatState::Idle => {
+            if state.cat_frame == 3 { crouching_sprite() } else { sitting_sprite() }
+        }
         CatState::WalkRight => {
             if state.cat_frame == 1 { walking_right_1() } else { walking_right_2() }
         }
@@ -229,7 +256,7 @@ pub fn draw_cat(frame: &mut Frame, state: &AppState, bottom_area: Rect, running_
             // Cat sits on top of chair: 1 row above baseline
             baseline.saturating_sub(sprite_height)
         }
-        CatState::Idle if state.cat_bob_timer == 0 => {
+        CatState::Idle if state.cat_bob_timer == 0 && state.cat_frame != 3 => {
             baseline.saturating_sub(sprite_height) // bob: one extra row up
         }
         _ => baseline.saturating_sub(sprite_height - 1),
@@ -283,6 +310,113 @@ mod tests {
     use super::*;
 
     use ratatui::{Terminal, backend::TestBackend};
+
+    /// Convert a sprite (Vec<Line>) to a plain string for visual inspection.
+    fn sprite_to_string(lines: &[Line<'_>]) -> String {
+        lines
+            .iter()
+            .map(|line| {
+                line.spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    // ── Individual sprite pattern tests ──
+
+    #[test]
+    fn sprite_sitting() {
+        let s = sprite_to_string(&sitting_sprite());
+        assert_eq!(s, [
+            " ▄ ▄",
+            "▐▀▀▀▌",
+            " ▀ ▀",
+        ].join("\n"));
+    }
+
+    #[test]
+    fn sprite_crouching() {
+        let s = sprite_to_string(&crouching_sprite());
+        assert_eq!(s, [
+            " ▄ ▄",
+            "▐█▀█▌",
+            "▝▀ ▀▘",
+        ].join("\n"));
+    }
+
+    #[test]
+    fn sprite_walking_right_frame1() {
+        let s = sprite_to_string(&walking_right_1());
+        assert_eq!(s, [
+            " ▄ ▄",
+            "▐▀▀▀▌",
+            "╶╯ ╰",
+        ].join("\n"));
+    }
+
+    #[test]
+    fn sprite_walking_right_frame2() {
+        let s = sprite_to_string(&walking_right_2());
+        assert_eq!(s, [
+            " ▄ ▄",
+            "▐▀▀▀▌",
+            " ╰ ╯",
+        ].join("\n"));
+    }
+
+    #[test]
+    fn sprite_working_frame1() {
+        let s = sprite_to_string(&working_sprite_1());
+        assert_eq!(s, [
+            " ▄▄",
+            " █▀╴",
+            " ▀▀",
+        ].join("\n"));
+    }
+
+    #[test]
+    fn sprite_working_frame2() {
+        let s = sprite_to_string(&working_sprite_2());
+        assert_eq!(s, [
+            " ▄▄",
+            " █▀─",
+            " ▀▀",
+        ].join("\n"));
+    }
+
+    #[test]
+    fn sprite_desk() {
+        let s = sprite_to_string(&desk_sprite());
+        assert_eq!(s, [
+            "████",
+            "█  █",
+        ].join("\n"));
+    }
+
+    #[test]
+    fn sprite_chair() {
+        let s = sprite_to_string(&chair_sprite());
+        assert_eq!(s, "██");
+    }
+
+    #[test]
+    fn sprite_paper_0() {
+        assert_eq!(sprite_to_string(&paper_sprite(0)), "");
+    }
+
+    #[test]
+    fn sprite_paper_1() {
+        assert_eq!(sprite_to_string(&paper_sprite(1)), "▐█▌");
+    }
+
+    #[test]
+    fn sprite_paper_2() {
+        let s = sprite_to_string(&paper_sprite(2));
+        assert_eq!(s, [
+            "▐█▌",
+            "▐█▌",
+        ].join("\n"));
+    }
 
     #[test]
     fn all_sprites_have_3_lines() {
@@ -343,7 +477,7 @@ mod tests {
         let output = render_cat_scene(&state, 0, 40, 14);
         let expected = [
             "  ▄ ▄",
-            " ▄▀▀▀▄",
+            " ▐▀▀▀▌",
             "  ▀ ▀                               ████",
             "                                 ██ █  █",
         ].join("\n");
@@ -380,7 +514,7 @@ mod tests {
         let expected = [
             "",
             "                ▄ ▄                  ▐█▌",
-            "               ▄▀▀▀▄                ████",
+            "               ▐▀▀▀▌                ████",
             "               ╶╯ ╰              ██ █  █",
         ].join("\n");
         assert_eq!(output, expected);
@@ -396,7 +530,7 @@ mod tests {
         let expected = [
             "",
             "                ▄ ▄",
-            "               ▄▀▀▀▄                ████",
+            "               ▐▀▀▀▌                ████",
             "               ╶╯ ╰              ██ █  █",
         ].join("\n");
         assert_eq!(output, expected);
