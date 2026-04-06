@@ -172,18 +172,21 @@ pub struct AppState {
     /// Previous focused pane ID, used to detect focus changes.
     pub prev_focused_pane_id: Option<String>,
     pub agent_filter: AgentFilter,
-    /// Last filter value successfully written to tmux. Used to detect external
-    /// changes (from another sidebar instance) vs failed local writes.
+    /// Last filter value successfully written to tmux. Used at startup to
+    /// detect whether the tmux variable differs from the initial default.
     last_saved_filter: AgentFilter,
     /// Last time a mouse click was processed on the filter bar (for debounce).
     pub last_filter_click: std::time::Instant,
     pub repo_filter: RepoFilter,
-    /// Last repo filter value successfully written to tmux.
+    /// Last repo filter value successfully written to tmux. Used to detect
+    /// external changes (from another sidebar instance) vs failed local writes.
     last_saved_repo_filter: RepoFilter,
     pub repo_popup_open: bool,
     pub repo_popup_selected: usize,
     pub repo_popup_area: Option<ratatui::layout::Rect>,
     pub repo_button_col: u16,
+    /// Last cursor value successfully written to tmux.
+    last_saved_cursor: usize,
 }
 
 impl AppState {
@@ -223,6 +226,7 @@ impl AppState {
             repo_popup_selected: 0,
             repo_popup_area: None,
             repo_button_col: u16::MAX,
+            last_saved_cursor: 0,
         }
     }
 
@@ -236,43 +240,63 @@ impl AppState {
     }
 
     /// Save cursor position to tmux global variable.
-    pub fn save_cursor(&self) {
-        let _ = tmux::run_tmux(&[
+    pub fn save_cursor(&mut self) {
+        if tmux::run_tmux(&[
             "set",
             "-g",
             "@sidebar_cursor",
             &self.selected_agent_row.to_string(),
-        ]);
+        ])
+        .is_some()
+        {
+            self.last_saved_cursor = self.selected_agent_row;
+        }
     }
 
-    /// Sync filter and cursor from tmux global variables (single subprocess call).
-    ///
-    /// Only applies a value when the tmux variable differs from what this
-    /// instance last wrote (`last_saved_*`).  This avoids overwriting local
-    /// changes when `save_filter` / `save_repo_filter` fails (e.g. tmux busy
-    /// with agent hooks), while still picking up changes made by another
-    /// sidebar instance.
+    /// Load saved state from tmux global variables at startup.
+    /// Restores filter, cursor, and repo filter from the previous session.
+    pub fn load_initial_global_state(&mut self) {
+        let opts = tmux::get_all_global_options();
+        self.apply_startup_options(&opts);
+    }
+
+    /// Periodic sync: only syncs repo filter from tmux global variables.
     pub fn sync_global_state(&mut self) {
         let opts = tmux::get_all_global_options();
         self.apply_global_options(&opts);
     }
 
-    /// Apply parsed tmux global options. Separated from `sync_global_state`
-    /// so the logic can be unit-tested without a running tmux server.
-    pub fn apply_global_options(&mut self, opts: &HashMap<String, String>) {
+    /// Apply startup options from tmux global variables.
+    /// Reads filter, cursor, and repo filter from tmux.
+    /// Called only once at startup to restore saved state.
+    pub fn apply_startup_options(&mut self, opts: &HashMap<String, String>) {
         if let Some(filter_str) = opts.get("@sidebar_filter") {
             let tmux_filter = AgentFilter::from_str(filter_str);
             if tmux_filter != self.last_saved_filter {
-                // Another instance changed the filter — adopt it.
                 self.agent_filter = tmux_filter;
                 self.last_saved_filter = tmux_filter;
             }
         }
-        if let Some(cursor_str) = opts.get("@sidebar_cursor") {
-            if let Ok(n) = cursor_str.parse::<usize>() {
-                self.selected_agent_row = n;
+        if let Some(cursor_str) = opts.get("@sidebar_cursor")
+            && let Ok(n) = cursor_str.parse::<usize>()
+            && n != self.last_saved_cursor
+        {
+            self.selected_agent_row = n;
+            self.last_saved_cursor = n;
+        }
+        if let Some(repo_str) = opts.get("@sidebar_repo_filter") {
+            let tmux_repo = RepoFilter::from_str(repo_str);
+            if tmux_repo != self.last_saved_repo_filter {
+                self.repo_filter = tmux_repo.clone();
+                self.last_saved_repo_filter = tmux_repo;
             }
         }
+    }
+
+    /// Apply periodic tmux global options. Only syncs repo filter.
+    /// Filter and cursor are local-only after startup to prevent
+    /// unexpected overwrites during hook-heavy periods (e.g. task completion).
+    pub fn apply_global_options(&mut self, opts: &HashMap<String, String>) {
         if let Some(repo_str) = opts.get("@sidebar_repo_filter") {
             let tmux_repo = RepoFilter::from_str(repo_str);
             if tmux_repo != self.last_saved_repo_filter {

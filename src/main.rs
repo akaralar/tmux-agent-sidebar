@@ -91,7 +91,7 @@ fn run_app(
 ) -> io::Result<()> {
     let mut state = AppState::new(tmux_pane);
     state.theme = tmux_agent_sidebar::ui::colors::ColorTheme::from_tmux();
-    state.sync_global_state();
+    state.load_initial_global_state();
     state.refresh();
 
     if let Some(ref pane_id) = state.focused_pane_id {
