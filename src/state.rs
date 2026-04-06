@@ -407,6 +407,15 @@ impl AppState {
             .retain(|pane_id, _| active_ids.contains(pane_id));
     }
 
+    /// Count the number of running agents across all repo groups.
+    pub fn running_count(&self) -> usize {
+        self.repo_groups
+            .iter()
+            .flat_map(|g| &g.panes)
+            .filter(|(p, _)| p.status == crate::tmux::PaneStatus::Running)
+            .count()
+    }
+
     pub fn rebuild_row_targets(&mut self) {
         // Reset stale repo filter if the repo no longer exists
         if let RepoFilter::Repo(ref name) = self.global.repo_filter {
@@ -667,8 +676,10 @@ impl AppState {
             .filter(|(p, _)| p.status == crate::tmux::PaneStatus::Running)
             .count();
 
-        let desk_x = panel_width.saturating_sub(
-            crate::ui::cat::DESK_OFFSET + crate::ui::cat::DESK_WIDTH + crate::ui::cat::CAT_WIDTH,
+        // Cat stops so working sprite (chair+feet = 4 chars) is adjacent to desk
+        let working_width = crate::ui::cat::CHAIR_WIDTH + 2; // chair + cat feet
+        let stop_x = panel_width.saturating_sub(
+            crate::ui::cat::DESK_OFFSET + crate::ui::cat::DESK_WIDTH + working_width,
         );
 
         match self.cat_state {
@@ -684,8 +695,8 @@ impl AppState {
             crate::ui::cat::CatState::WalkRight => {
                 self.cat_x = self.cat_x.saturating_add(1);
                 self.cat_frame = if self.cat_frame == 1 { 2 } else { 1 };
-                if self.cat_x >= desk_x {
-                    self.cat_x = desk_x;
+                if self.cat_x >= stop_x {
+                    self.cat_x = stop_x;
                     self.cat_state = crate::ui::cat::CatState::Working;
                     self.cat_frame = 0;
                 }
@@ -2338,11 +2349,12 @@ mod tests {
             panes: vec![(pane, PaneGitInfo::default())],
         }];
         let panel_width = 60u16;
-        let desk_x = panel_width.saturating_sub(
-            crate::ui::cat::DESK_OFFSET + crate::ui::cat::DESK_WIDTH + crate::ui::cat::CAT_WIDTH,
+        let working_width = crate::ui::cat::CHAIR_WIDTH + 2;
+        let stop_x = panel_width.saturating_sub(
+            crate::ui::cat::DESK_OFFSET + crate::ui::cat::DESK_WIDTH + working_width,
         );
         state.cat_state = crate::ui::cat::CatState::WalkRight;
-        state.cat_x = desk_x - 1;
+        state.cat_x = stop_x - 1;
         state.tick_cat(panel_width);
         assert!(matches!(state.cat_state, crate::ui::cat::CatState::Working));
     }

@@ -19,8 +19,11 @@ pub enum CatState {
 
 pub const CAT_WIDTH: u16 = 7;
 pub const CAT_HOME_X: u16 = 1;
-pub const DESK_OFFSET: u16 = 10;
-pub const DESK_WIDTH: u16 = 5;
+pub const DESK_OFFSET: u16 = 0;
+pub const DESK_WIDTH: u16 = 4;
+pub const CHAIR_WIDTH: u16 = 2;
+/// Gap between chair and desk.
+pub const CHAIR_DESK_GAP: u16 = 1;
 pub const MAX_PAPER_HEIGHT: u16 = 3;
 /// Ticks between idle bobs (~2 seconds at 200ms tick).
 pub const BOB_INTERVAL: usize = 10;
@@ -35,7 +38,6 @@ fn sitting_sprite() -> Vec<Line<'static>> {
             Span::styled("▄", Style::new().fg(CAT_BODY)),
             Span::raw(" "),
             Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::raw("  "),
         ]),
         Line::from(vec![
             Span::styled("▄", Style::new().fg(CAT_BODY)),
@@ -43,27 +45,23 @@ fn sitting_sprite() -> Vec<Line<'static>> {
             Span::styled("▀", Style::new().fg(CAT_NOSE)),
             Span::styled("▀", Style::new().fg(CAT_EYE)),
             Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::raw(" "),
         ]),
         Line::from(vec![
             Span::raw(" "),
             Span::styled("▀", Style::new().fg(CAT_BODY)),
             Span::raw(" "),
             Span::styled("▀", Style::new().fg(CAT_BODY)),
-            Span::styled("╶", Style::new().fg(CAT_BODY)),
-            Span::raw(" "),
         ]),
     ]
 }
 
-fn running_sprite_1() -> Vec<Line<'static>> {
+fn walking_right_1() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::raw(" "),
             Span::styled("▄", Style::new().fg(CAT_BODY)),
             Span::raw(" "),
             Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::raw("  "),
         ]),
         Line::from(vec![
             Span::styled("▄", Style::new().fg(CAT_BODY)),
@@ -71,26 +69,23 @@ fn running_sprite_1() -> Vec<Line<'static>> {
             Span::styled("▀", Style::new().fg(CAT_NOSE)),
             Span::styled("▀", Style::new().fg(CAT_EYE)),
             Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::styled("╶", Style::new().fg(CAT_BODY)),
         ]),
         Line::from(vec![
             Span::styled("╶", Style::new().fg(CAT_BODY)),
             Span::styled("╯", Style::new().fg(CAT_BODY)),
             Span::raw(" "),
             Span::styled("╰", Style::new().fg(CAT_BODY)),
-            Span::raw("  "),
         ]),
     ]
 }
 
-fn running_sprite_2() -> Vec<Line<'static>> {
+fn walking_right_2() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::raw(" "),
             Span::styled("▄", Style::new().fg(CAT_BODY)),
             Span::raw(" "),
             Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::raw("  "),
         ]),
         Line::from(vec![
             Span::styled("▄", Style::new().fg(CAT_BODY)),
@@ -98,46 +93,225 @@ fn running_sprite_2() -> Vec<Line<'static>> {
             Span::styled("▀", Style::new().fg(CAT_NOSE)),
             Span::styled("▀", Style::new().fg(CAT_EYE)),
             Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::styled("╶", Style::new().fg(CAT_BODY)),
         ]),
         Line::from(vec![
             Span::raw(" "),
             Span::styled("╰", Style::new().fg(CAT_BODY)),
             Span::raw(" "),
             Span::styled("╯", Style::new().fg(CAT_BODY)),
-            Span::raw("  "),
         ]),
     ]
 }
 
-/// Draw the cat sprite overlaying the top border of the bottom panel.
-/// `bottom_area` is the Rect of the bottom panel (including its border).
-/// The cat is positioned so its bottom row (feet) aligns with the border top row.
-pub fn draw_cat(frame: &mut Frame, state: &AppState, bottom_area: Rect) {
-    let sprite_lines = match state.cat_frame {
-        1 => running_sprite_1(),
-        2 => running_sprite_2(),
-        _ => sitting_sprite(),
+fn walking_left_1() -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+        ]),
+        Line::from(vec![
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▀", Style::new().fg(CAT_EYE)),
+            Span::styled("▀", Style::new().fg(CAT_NOSE)),
+            Span::styled("▀", Style::new().fg(CAT_EYE)),
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::styled("╰", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+            Span::raw(" "),
+            Span::styled("╯", Style::new().fg(CAT_BODY)),
+        ]),
+    ]
+}
+
+fn walking_left_2() -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+        ]),
+        Line::from(vec![
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▀", Style::new().fg(CAT_EYE)),
+            Span::styled("▀", Style::new().fg(CAT_NOSE)),
+            Span::styled("▀", Style::new().fg(CAT_EYE)),
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("╯", Style::new().fg(CAT_BODY)),
+            Span::styled("╰", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+        ]),
+    ]
+}
+
+/// Working sprite 1: cat facing right, arm down.
+fn working_sprite_1() -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::styled("█", Style::new().fg(CAT_BODY)),
+            Span::styled("▀", Style::new().fg(CAT_EYE)),
+            Span::styled("█", Style::new().fg(CAT_BODY)),
+            Span::styled("╴", Style::new().fg(CAT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::styled("▀▀▀", Style::new().fg(CAT_BODY)),
+        ]),
+    ]
+}
+
+/// Working sprite 2: cat facing right, arm extended.
+fn working_sprite_2() -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+            Span::styled("▄", Style::new().fg(CAT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::styled("█", Style::new().fg(CAT_BODY)),
+            Span::styled("▀", Style::new().fg(CAT_EYE)),
+            Span::styled("█", Style::new().fg(CAT_BODY)),
+            Span::styled("─", Style::new().fg(CAT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::styled("▀▀▀", Style::new().fg(CAT_BODY)),
+        ]),
+    ]
+}
+
+const DESK_COLOR: Color = Color::Indexed(137); // brown
+const CHAIR_COLOR: Color = Color::Indexed(94); // dark brown
+
+/// Desk: top plate + legs.
+fn desk_sprite() -> Vec<Line<'static>> {
+    vec![
+        Line::from(Span::styled("████", Style::new().fg(DESK_COLOR))),
+        Line::from(Span::styled("█  █", Style::new().fg(DESK_COLOR))),
+    ]
+}
+
+/// Chair: full block.
+fn chair_sprite() -> Vec<Line<'static>> {
+    vec![
+        Line::from(Span::styled("██", Style::new().fg(CHAIR_COLOR))),
+    ]
+}
+
+const PAPER_COLOR: Color = Color::Indexed(255); // white
+
+fn paper_sprite(running_count: usize) -> Vec<Line<'static>> {
+    let height = match running_count {
+        0 => 0,
+        1 => 1,
+        2..=3 => 2,
+        _ => MAX_PAPER_HEIGHT as usize,
+    };
+    (0..height)
+        .map(|_| Line::from(Span::styled("▐█▌", Style::new().fg(PAPER_COLOR))))
+        .collect()
+}
+
+/// Draw cat, desk, chair, and papers.
+/// `running_count` controls paper stack height.
+///
+/// Layout: all elements share the same baseline (bottom_area.y - 1).
+/// Each element's bottom row sits on that baseline, growing upward.
+///
+/// Working state example:
+/// ```text
+///                     ▄▄
+///                     █▀╴  ████
+///                  ▄▄ ▀▀
+/// ```
+/// baseline row: chair ▄▄ + cat feet ▀▀ (cat feet on chair)
+/// row above:    cat body + desk ████
+/// row above:    cat ears
+pub fn draw_cat(frame: &mut Frame, state: &AppState, bottom_area: Rect, running_count: usize) {
+    let panel_width = bottom_area.width;
+    // Baseline: the bottom-most row for all elements
+    let baseline = bottom_area.y.saturating_sub(1);
+
+    // --- Positions ---
+    let desk_x = bottom_area.x + panel_width.saturating_sub(DESK_OFFSET + DESK_WIDTH);
+    let chair_x = desk_x.saturating_sub(CHAIR_WIDTH + CHAIR_DESK_GAP);
+
+    // --- Draw cat first (so desk/chair render on top if overlapping) ---
+    let sprite_lines = match state.cat_state {
+        CatState::Idle => sitting_sprite(),
+        CatState::WalkRight => {
+            if state.cat_frame == 1 { walking_right_1() } else { walking_right_2() }
+        }
+        CatState::Working => {
+            if state.cat_frame == 1 { working_sprite_1() } else { working_sprite_2() }
+        }
+        CatState::WalkLeft => {
+            if state.cat_frame == 1 { walking_left_1() } else { walking_left_2() }
+        }
     };
 
     let sprite_height = sprite_lines.len() as u16;
-    // Cat sits above the bottom panel border (not overlapping)
-    let cat_y = bottom_area.y.saturating_sub(sprite_height);
+    let cat_y = match state.cat_state {
+        CatState::Working => {
+            // Cat sits on top of chair: 1 row above baseline
+            baseline.saturating_sub(sprite_height)
+        }
+        CatState::Idle if state.cat_bob_timer == 0 => {
+            baseline.saturating_sub(sprite_height) // bob: one extra row up
+        }
+        _ => baseline.saturating_sub(sprite_height - 1),
+    };
     let cat_x = bottom_area.x + state.cat_x;
+    render_lines(frame, &sprite_lines, cat_x, cat_y);
 
-    for (i, line) in sprite_lines.iter().enumerate() {
-        let y = cat_y + i as u16;
-        // Skip if outside terminal bounds
+    // --- Draw chair (always visible) ---
+    let chair_lines = chair_sprite();
+    let chair_height = chair_lines.len() as u16;
+    let chair_y = baseline.saturating_sub(chair_height - 1);
+    render_lines(frame, &chair_lines, chair_x, chair_y);
+
+    // --- Draw desk (legs on baseline, top plate one row above) ---
+    let desk_lines = desk_sprite();
+    let desk_height = desk_lines.len() as u16;
+    let desk_y = baseline.saturating_sub(desk_height - 1);
+    render_lines(frame, &desk_lines, desk_x, desk_y);
+
+    // --- Draw papers above desk ---
+    if running_count > 0 {
+        let papers = paper_sprite(running_count);
+        if !papers.is_empty() {
+            let paper_y = desk_y.saturating_sub(papers.len() as u16);
+            let paper_x = desk_x + 1;
+            render_lines(frame, &papers, paper_x, paper_y);
+        }
+    }
+}
+
+/// Helper to render a slice of Lines at given position, clipping to frame bounds.
+fn render_lines(frame: &mut Frame, lines: &[Line<'_>], x: u16, start_y: u16) {
+    for (i, line) in lines.iter().enumerate() {
+        let y = start_y + i as u16;
         if y >= frame.area().height {
             continue;
         }
         let line_width: u16 = line.spans.iter().map(|s| s.content.width() as u16).sum();
-        let available = frame.area().width.saturating_sub(cat_x);
+        let available = frame.area().width.saturating_sub(x);
         if available == 0 {
             continue;
         }
         let w = line_width.min(available);
-        let area = Rect::new(cat_x, y, w, 1);
+        let area = Rect::new(x, y, w, 1);
         frame.render_widget(line.clone(), area);
     }
 }
@@ -149,44 +323,120 @@ mod tests {
     use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
-    fn sprite_frames_have_consistent_line_count() {
-        let sitting = sitting_sprite();
-        let run1 = running_sprite_1();
-        let run2 = running_sprite_2();
-        assert_eq!(sitting.len(), 3);
-        assert_eq!(run1.len(), 3);
-        assert_eq!(run2.len(), 3);
+    fn all_sprites_have_3_lines() {
+        assert_eq!(sitting_sprite().len(), 3);
+        assert_eq!(walking_right_1().len(), 3);
+        assert_eq!(walking_right_2().len(), 3);
+        assert_eq!(walking_left_1().len(), 3);
+        assert_eq!(walking_left_2().len(), 3);
+        assert_eq!(working_sprite_1().len(), 3);
+        assert_eq!(working_sprite_2().len(), 3);
     }
 
     #[test]
-    fn draw_cat_renders_without_panic() {
-        let backend = TestBackend::new(60, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let mut state = AppState::new("%0".into());
-        state.cat_x = 5;
-        state.cat_frame = 0; // sitting
-
-        terminal
-            .draw(|frame| {
-                let bottom_area = Rect::new(0, 20, 60, 10);
-                draw_cat(frame, &state, bottom_area);
-            })
-            .unwrap();
+    fn desk_sprite_has_lines() {
+        let desk = desk_sprite();
+        assert!(!desk.is_empty());
     }
 
     #[test]
-    fn draw_cat_running_frame() {
-        let backend = TestBackend::new(60, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let mut state = AppState::new("%0".into());
-        state.cat_x = 10;
-        state.cat_frame = 1; // running frame 1
+    fn paper_sprite_height_scales_with_count() {
+        assert_eq!(paper_sprite(0).len(), 0);
+        assert_eq!(paper_sprite(1).len(), 1);
+        assert_eq!(paper_sprite(3).len(), 2);
+        assert_eq!(paper_sprite(5).len(), 3);
+    }
 
+    /// Helper: render draw_cat into a buffer and return as string for visual inspection.
+    fn render_cat_scene(state: &AppState, running_count: usize, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let bottom_y = height.saturating_sub(10);
         terminal
             .draw(|frame| {
-                let bottom_area = Rect::new(0, 20, 60, 10);
-                draw_cat(frame, &state, bottom_area);
+                let bottom_area = Rect::new(0, bottom_y, width, 10);
+                draw_cat(frame, state, bottom_area, running_count);
             })
             .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let area = buf.area;
+        let mut lines = Vec::new();
+        for y in area.y..area.y + area.height {
+            let mut line = String::new();
+            for x in area.x..area.x + area.width {
+                line.push_str(buf[(x, y)].symbol());
+            }
+            lines.push(line.trim_end().to_string());
+        }
+        // Remove trailing empty lines
+        while lines.last().is_some_and(|l| l.is_empty()) {
+            lines.pop();
+        }
+        lines.join("\n")
+    }
+
+    #[test]
+    fn snapshot_idle() {
+        let state = AppState::new("%0".into());
+        let output = render_cat_scene(&state, 0, 40, 14);
+        let expected = [
+            "  ▄ ▄",
+            " ▄▀▀▀▄",
+            "  ▀ ▀                               ████",
+            "                                 ██ █  █",
+        ].join("\n");
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn snapshot_working() {
+        let mut state = AppState::new("%0".into());
+        state.cat_state = CatState::Working;
+        let panel_width = 40u16;
+        let working_width = CHAIR_WIDTH + 2;
+        let stop_x = panel_width
+            .saturating_sub(DESK_OFFSET + DESK_WIDTH + working_width);
+        state.cat_x = stop_x;
+        state.cat_frame = 1;
+        let output = render_cat_scene(&state, 2, panel_width, 14);
+        let expected = [
+            "                                ▄ ▄  ▐█▌",
+            "                                █▀█╴ ▐█▌",
+            "                                ▀▀▀ ████",
+            "                                 ██ █  █",
+        ].join("\n");
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn snapshot_walking_right() {
+        let mut state = AppState::new("%0".into());
+        state.cat_state = CatState::WalkRight;
+        state.cat_x = 15;
+        state.cat_frame = 1;
+        let output = render_cat_scene(&state, 1, 40, 14);
+        let expected = [
+            "",
+            "                ▄ ▄                  ▐█▌",
+            "               ▄▀▀▀▄                ████",
+            "               ╶╯ ╰              ██ █  █",
+        ].join("\n");
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn snapshot_walking_left() {
+        let mut state = AppState::new("%0".into());
+        state.cat_state = CatState::WalkLeft;
+        state.cat_x = 15;
+        state.cat_frame = 1;
+        let output = render_cat_scene(&state, 0, 40, 14);
+        let expected = [
+            "",
+            "               ▄ ▄",
+            "               ▄▀▀▀▄                ████",
+            "               ╰  ╯              ██ █  █",
+        ].join("\n");
+        assert_eq!(output, expected);
     }
 }

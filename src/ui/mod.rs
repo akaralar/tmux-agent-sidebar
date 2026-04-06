@@ -38,5 +38,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
 
     if bot_h > 0 && chunks.len() > 2 {
         bottom::draw_bottom(frame, state, chunks[2]);
+        let running_count = state.running_count();
+        cat::draw_cat(frame, state, chunks[2], running_count);
     }
 }
