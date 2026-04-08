@@ -19,16 +19,15 @@ A tmux sidebar that monitors all AI coding agents (Claude Code, Codex) across ev
 
 ## Features
 
-- **Cross-session monitoring** — All agents across every tmux session and window in one sidebar
+- **Cross-session monitoring** — Shows all agents across every tmux session and window in one sidebar
 - **Pane jump** — Select an agent and press Enter to jump to its pane, even across different windows
-- **Repository grouping** — Agents working in the same repo (including worktrees) are grouped together
-- **Status filter** — Filter by Running / Waiting / Idle / Error with live counts per status
-- **Subagent tree** — Shows parent–child hierarchy of spawned subagents with tree connectors
+- **Repository grouping** — Groups agents by the same repo, including worktrees, so related panes stay together
+- **Status filter** — Filters by Running / Waiting / Idle / Error with live counts per status
+- **Subagent tree** — Shows spawned subagents as a parent-child tree
 - **Task progress** — Displays task completion (e.g. `3/7`) synced from agent task lists
 - **Activity log** — Streams each tool invocation (Read, Edit, Bash, etc.) per agent in real time
-- **Git integration** — Branch name, ahead/behind counts, PR number (`gh`), and per-file diff stats
+- **Git integration** — Shows branch name, ahead/behind counts, PR number (`gh`), and per-file diff stats
 - **Permission mode** — Shows `auto` / `plan` / `!` badge so you know each agent's permission level
-- **Auto sidebar** — Opens automatically on new windows, closes when no other panes remain
 
 ## Requirements
 
@@ -36,9 +35,11 @@ A tmux sidebar that monitors all AI coding agents (Claude Code, Codex) across ev
 - [Rust](https://rustup.rs/) (only if building from source)
 - [GitHub CLI](https://cli.github.com/) (optional, for PR number display in Git tab)
 
-## Installation
+## Setting Up
 
-### TPM (recommended)
+### 1. Installation
+
+#### TPM (recommended)
 
 Add the plugin to your `tmux.conf`:
 
@@ -49,46 +50,51 @@ run '~/.tmux/plugins/tpm/tpm'
 
 Press `prefix + I` to install. On first run, an install wizard will prompt you to download a pre-built binary or build from source.
 
-### Manual
+#### Manual
 
-Clone the repository:
+1. Clone the repository:
 
 ```sh
 git clone https://github.com/hiroppy/tmux-agent-sidebar.git ~/.tmux/plugins/tmux-agent-sidebar
 ```
 
-Then add to your `tmux.conf`:
+1. Add the plugin to your `tmux.conf`:
 
 ```tmux
 run-shell ~/.tmux/plugins/tmux-agent-sidebar/tmux-agent-sidebar.tmux
 ```
 
-Install the binary using one of the following methods:
+1. Install the binary using one of the following methods:
 
-**Option A: Download pre-built binary**
+   <details>
+   <summary>Download pre-built binary</summary>
 
-```sh
-# macOS (Apple Silicon)
-curl -fSL https://github.com/hiroppy/tmux-agent-sidebar/releases/latest/download/tmux-agent-sidebar-darwin-aarch64 \
-  -o ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
-chmod +x ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
-```
+   ```sh
+   # macOS (Apple Silicon)
+   curl -fSL https://github.com/hiroppy/tmux-agent-sidebar/releases/latest/download/tmux-agent-sidebar-darwin-aarch64 \
+     -o ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
+   chmod +x ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
+   ```
 
-**Option B: Build from source (requires Rust)**
+   </details>
 
-```sh
-cd ~/.tmux/plugins/tmux-agent-sidebar
-cargo build --release
-```
+   <details>
+   <summary>Build from source (requires Rust)</summary>
+
+   ```sh
+   cd ~/.tmux/plugins/tmux-agent-sidebar
+   cargo build --release
+   ```
+
+   </details>
 
 Reload tmux config with `prefix + r`.
 
-### Setting Up Agent Hooks
+### 2. Agent Hooks
 
 The sidebar receives status updates through agent hooks. Add the following hook configurations to your agent settings.
 
-<details>
-<summary>Claude Code</summary>
+#### 2.1 Claude Code
 
 Add to your Claude Code hooks configuration (e.g. `~/.claude/settings.json`):
 
@@ -176,10 +182,7 @@ Add to your Claude Code hooks configuration (e.g. `~/.claude/settings.json`):
 }
 ```
 
-</details>
-
-<details>
-<summary>Codex</summary>
+#### 2.2 Codex
 
 Create or edit `~/.codex/hooks.json`:
 
@@ -222,8 +225,6 @@ Create or edit `~/.codex/hooks.json`:
 ```
 
 > **Note:** Codex does not support `Notification` or `PostToolUse` hooks, so waiting status and activity logging are unavailable.
-
-</details>
 
 ## Usage
 
