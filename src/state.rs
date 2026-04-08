@@ -281,6 +281,12 @@ pub struct AppState {
     /// Cat animation frame index (0 = sitting, 1-2 = running).
     pub cat_frame: usize,
     pub cat_bob_timer: usize,
+    /// Idle animation schedule tick for jump motion within the bob cycle.
+    pub cat_idle_jump_tick: usize,
+    /// Idle animation schedule tick for blink motion within the bob cycle.
+    pub cat_idle_blink_tick: usize,
+    /// Seed used to reshuffle idle motion timing.
+    pub cat_idle_seed: usize,
     /// Update notice shown when a newer GitHub release is available.
     pub version_notice: Option<crate::version::UpdateNotice>,
     /// Shared state across sidebar instances, persisted to tmux global variables.
@@ -300,9 +306,29 @@ pub struct HyperlinkOverlay {
     pub url: String,
 }
 
+fn reseed_cat_idle_motion(state: &mut AppState) {
+    const A: usize = 1664525;
+    const C: usize = 1013904223;
+    state.cat_idle_seed = state.cat_idle_seed.wrapping_mul(A).wrapping_add(C);
+    let interval = crate::ui::cat::BOB_INTERVAL;
+    let first_window = (interval / 3).max(1);
+    let second_window = (interval / 3).max(1);
+    state.cat_idle_jump_tick = 3 + (state.cat_idle_seed % first_window);
+    state.cat_idle_blink_tick = (interval / 2) + ((state.cat_idle_seed / 7) % second_window);
+    if state.cat_idle_blink_tick >= interval {
+        state.cat_idle_blink_tick = interval.saturating_sub(1);
+    }
+    if state.cat_idle_blink_tick == state.cat_idle_jump_tick {
+        state.cat_idle_blink_tick = (state.cat_idle_blink_tick + 1) % interval;
+    }
+    if state.cat_idle_blink_tick == state.cat_idle_jump_tick {
+        state.cat_idle_blink_tick = (state.cat_idle_blink_tick + 2) % interval;
+    }
+}
+
 impl AppState {
     pub fn new(tmux_pane: String) -> Self {
-        Self {
+        let mut state = Self {
             now: 0,
             sessions: vec![],
             repo_groups: vec![],
@@ -334,12 +360,17 @@ impl AppState {
             cat_x: crate::ui::cat::CAT_HOME_X,
             cat_frame: 0,
             cat_bob_timer: 0,
+            cat_idle_jump_tick: 8,
+            cat_idle_blink_tick: 24,
+            cat_idle_seed: 1,
             version_notice: None,
             global: GlobalState::new(),
             hyperlink_overlays: vec![],
             port_scan_initialized: false,
             last_port_refresh: Instant::now(),
-        }
+        };
+        reseed_cat_idle_motion(&mut state);
+        state
     }
 
     pub fn pane_state_mut(&mut self, pane_id: &str) -> &mut PaneRuntimeState {
@@ -682,6 +713,10 @@ impl AppState {
             crate::ui::cat::DESK_OFFSET + crate::ui::cat::DESK_WIDTH + working_width,
         );
 
+        fn walk_step(distance: u16) -> u16 {
+            if distance > 8 { 2 } else { 1 }
+        }
+
         match self.cat_state {
             crate::ui::cat::CatState::Idle => {
                 if running_count > 0 {
@@ -690,10 +725,15 @@ impl AppState {
                     self.cat_x = self.cat_x.saturating_add(1);
                 } else {
                     self.cat_bob_timer = (self.cat_bob_timer + 1) % crate::ui::cat::BOB_INTERVAL;
+                    if self.cat_bob_timer == 0 {
+                        reseed_cat_idle_motion(self);
+                    }
                 }
             }
             crate::ui::cat::CatState::WalkRight => {
-                self.cat_x = self.cat_x.saturating_add(1);
+                let remaining = stop_x.saturating_sub(self.cat_x);
+                let step = walk_step(remaining);
+                self.cat_x = self.cat_x.saturating_add(step);
                 self.cat_frame = if self.cat_frame == 1 { 2 } else { 1 };
                 if self.cat_x >= stop_x {
                     self.cat_x = stop_x;
@@ -702,20 +742,27 @@ impl AppState {
                 }
             }
             crate::ui::cat::CatState::Working => {
-                self.cat_frame = if self.cat_frame == 1 { 2 } else { 1 };
+                self.cat_frame = match self.cat_frame {
+                    1 => 2,
+                    2 => 3,
+                    _ => 1,
+                };
                 if running_count == 0 {
                     self.cat_state = crate::ui::cat::CatState::WalkLeft;
                     self.cat_frame = 0;
                 }
             }
             crate::ui::cat::CatState::WalkLeft => {
-                self.cat_x = self.cat_x.saturating_sub(1);
+                let remaining = self.cat_x.saturating_sub(crate::ui::cat::CAT_HOME_X);
+                let step = walk_step(remaining);
+                self.cat_x = self.cat_x.saturating_sub(step);
                 self.cat_frame = if self.cat_frame == 1 { 2 } else { 1 };
                 if self.cat_x <= crate::ui::cat::CAT_HOME_X {
                     self.cat_x = crate::ui::cat::CAT_HOME_X;
                     self.cat_state = crate::ui::cat::CatState::Idle;
                     self.cat_frame = 0;
                     self.cat_bob_timer = 0;
+                    reseed_cat_idle_motion(self);
                 }
             }
         }
@@ -2318,6 +2365,9 @@ mod tests {
         assert_eq!(state.cat_x, crate::ui::cat::CAT_HOME_X);
         assert_eq!(state.cat_frame, 0);
         assert_eq!(state.cat_bob_timer, 0);
+        assert!(state.cat_idle_jump_tick < crate::ui::cat::BOB_INTERVAL);
+        assert!(state.cat_idle_blink_tick < crate::ui::cat::BOB_INTERVAL);
+        assert_ne!(state.cat_idle_jump_tick, state.cat_idle_blink_tick);
     }
 
     #[test]
