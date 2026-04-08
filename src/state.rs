@@ -690,13 +690,6 @@ impl AppState {
                     self.cat_x = self.cat_x.saturating_add(1);
                 } else {
                     self.cat_bob_timer = (self.cat_bob_timer + 1) % crate::ui::cat::BOB_INTERVAL;
-                    if self.cat_bob_timer == 0 {
-                        // ~30% chance to crouch on each cycle
-                        self.cat_frame = if self.now % 3 == 0 { 3 } else { 0 };
-                    } else if self.cat_bob_timer == 2 && self.cat_frame == 3 {
-                        // Return to sitting after 2 ticks of crouching
-                        self.cat_frame = 0;
-                    }
                 }
             }
             crate::ui::cat::CatState::WalkRight => {
