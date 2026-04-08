@@ -8,17 +8,17 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::state::AppState;
 
-/// Cat animation state machine.
+/// Mascot animation state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CatState {
+pub enum MascotState {
     Idle,
     WalkRight,
     Working,
     WalkLeft,
 }
 
-pub const CAT_WIDTH: u16 = 7;
-pub const CAT_HOME_X: u16 = 1;
+pub const MASCOT_WIDTH: u16 = 7;
+pub const MASCOT_HOME_X: u16 = 1;
 pub const DESK_OFFSET: u16 = 0;
 pub const DESK_WIDTH: u16 = 4;
 pub const CHAIR_WIDTH: u16 = 2;
@@ -27,37 +27,38 @@ pub const CHAIR_DESK_GAP: u16 = 1;
 pub const MAX_PAPER_HEIGHT: u16 = 2;
 /// Ticks between idle bobs (~8 seconds at 200ms tick).
 pub const BOB_INTERVAL: usize = 40;
-const CAT_BODY: Color = Color::Indexed(208);
-const CAT_EYE: Color = Color::Indexed(114);
-const CAT_NOSE: Color = Color::Indexed(174);
+const MASCOT_BODY: Color = Color::Indexed(208);
+const MASCOT_EYE: Color = Color::Indexed(114);
+const MASCOT_NOSE: Color = Color::Indexed(174);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IdleMotion {
     Rest,
     Jump,
     Blink,
+    Wave,
 }
 
 fn sitting_sprite() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
             Span::raw(" "),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("▀", Style::new().fg(CAT_NOSE)),
-            Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▀", Style::new().fg(MASCOT_NOSE)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▀", Style::new().fg(CAT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_BODY)),
             Span::raw(" "),
-            Span::styled("▀", Style::new().fg(CAT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_BODY)),
         ]),
     ]
 }
@@ -66,22 +67,47 @@ fn sitting_sprite_blink() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
             Span::raw(" "),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::styled("─", Style::new().fg(CAT_EYE)),
-            Span::styled("▀", Style::new().fg(CAT_NOSE)),
-            Span::styled("─", Style::new().fg(CAT_EYE)),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+            Span::styled("─", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▀", Style::new().fg(MASCOT_NOSE)),
+            Span::styled("─", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▀", Style::new().fg(CAT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_BODY)),
             Span::raw(" "),
-            Span::styled("▀", Style::new().fg(CAT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_BODY)),
+        ]),
+    ]
+}
+
+fn sitting_sprite_wave() -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▘", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▀", Style::new().fg(MASCOT_NOSE)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("▀", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
+            Span::styled("▀", Style::new().fg(MASCOT_BODY)),
         ]),
     ]
 }
@@ -90,21 +116,23 @@ fn walking_right_1() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
             Span::raw(" "),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("▀", Style::new().fg(CAT_NOSE)),
-            Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▀", Style::new().fg(MASCOT_NOSE)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▖▖", Style::new().fg(CAT_BODY)),
+            Span::styled("▖", Style::new().fg(MASCOT_BODY)),
             Span::raw(" "),
-            Span::styled("▗▗", Style::new().fg(CAT_BODY)),
+            Span::styled("▗", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
+            Span::raw(" "),
         ]),
     ]
 }
@@ -113,21 +141,23 @@ fn walking_right_2() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
             Span::raw(" "),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("▀", Style::new().fg(CAT_NOSE)),
-            Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▀", Style::new().fg(MASCOT_NOSE)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▗▗", Style::new().fg(CAT_BODY)),
+            Span::styled("▗", Style::new().fg(MASCOT_BODY)),
             Span::raw(" "),
-            Span::styled("▖▖", Style::new().fg(CAT_BODY)),
+            Span::styled("▖", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
+            Span::raw(" "),
         ]),
     ]
 }
@@ -136,21 +166,24 @@ fn walking_left_1() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
             Span::raw(" "),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("▀", Style::new().fg(CAT_NOSE)),
-            Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▀", Style::new().fg(MASCOT_NOSE)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▗▗", Style::new().fg(CAT_BODY)),
             Span::raw(" "),
-            Span::styled("▖▖", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+            Span::styled("▗", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
+            Span::styled("▖", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
         ]),
     ]
 }
@@ -159,63 +192,63 @@ fn walking_left_2() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
             Span::raw(" "),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
-            Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("▀", Style::new().fg(CAT_NOSE)),
-            Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▀", Style::new().fg(MASCOT_NOSE)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
-            Span::styled("▖▖", Style::new().fg(CAT_BODY)),
             Span::raw(" "),
-            Span::styled("▗▗", Style::new().fg(CAT_BODY)),
+            Span::raw(" "),
+            Span::styled("▖", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
+            Span::styled("▗", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
         ]),
     ]
 }
 
-/// Working sprite 1: cat facing right, arm down.
-/// Feet use bg=CHAIR_COLOR to fill gap to chair below.
+/// Working sprite: mascot seated sideways at the desk.
 fn working_sprite_1() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▄▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("█", Style::new().fg(CAT_BODY)),
-            Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("╴", Style::new().fg(CAT_BODY)),
+            Span::styled("█", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("╴", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▀▀", Style::new().fg(CAT_BODY).bg(CHAIR_COLOR)),
+            Span::styled("▀▀", Style::new().fg(MASCOT_BODY).bg(CHAIR_COLOR)),
         ]),
     ]
 }
 
-/// Working sprite 2: cat facing right, arm extended.
-/// Feet use bg=CHAIR_COLOR to fill gap to chair below.
 fn working_sprite_2() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▄▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("█", Style::new().fg(CAT_BODY)),
-            Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("─", Style::new().fg(CAT_BODY)),
+            Span::styled("█", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("─", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▀▀", Style::new().fg(CAT_BODY).bg(CHAIR_COLOR)),
+            Span::styled("▀▀", Style::new().fg(MASCOT_BODY).bg(CHAIR_COLOR)),
         ]),
     ]
 }
@@ -224,17 +257,17 @@ fn working_sprite_3() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▄▄", Style::new().fg(CAT_BODY)),
+            Span::styled("▄▄", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("█", Style::new().fg(CAT_BODY)),
-            Span::styled("▀", Style::new().fg(CAT_EYE)),
-            Span::styled("╶", Style::new().fg(CAT_BODY)),
+            Span::styled("█", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("╶", Style::new().fg(MASCOT_BODY)),
         ]),
         Line::from(vec![
             Span::raw(" "),
-            Span::styled("▀▀", Style::new().fg(CAT_BODY).bg(CHAIR_COLOR)),
+            Span::styled("▀▀", Style::new().fg(MASCOT_BODY).bg(CHAIR_COLOR)),
         ]),
     ]
 }
@@ -272,23 +305,37 @@ fn paper_sprite(running_count: usize) -> Vec<Line<'static>> {
 }
 
 fn idle_motion(state: &AppState) -> IdleMotion {
-    if state.cat_bob_timer == state.cat_idle_jump_tick {
+    if state.mascot_idle_wave_enabled && state.mascot_bob_timer == state.mascot_idle_wave_tick {
+        IdleMotion::Wave
+    } else if state.mascot_bob_timer == state.mascot_idle_jump_tick {
         IdleMotion::Jump
-    } else if state.cat_bob_timer == state.cat_idle_blink_tick {
+    } else if state.mascot_bob_timer == state.mascot_idle_blink_tick {
         IdleMotion::Blink
     } else {
         IdleMotion::Rest
     }
 }
 
+fn working_paper_lift(state: &AppState) -> u16 {
+    if state.mascot_state == MascotState::Working
+        && state.mascot_working_paper_timer > 0
+        && state.mascot_working_paper_timer < state.mascot_working_paper_lift_until
+    {
+        1
+    } else {
+        0
+    }
+}
+
 fn idle_sprite(motion: IdleMotion) -> Vec<Line<'static>> {
     match motion {
+        IdleMotion::Wave => sitting_sprite_wave(),
         IdleMotion::Blink => sitting_sprite_blink(),
         IdleMotion::Jump | IdleMotion::Rest => sitting_sprite(),
     }
 }
 
-/// Draw cat, desk, chair, and papers.
+/// Draw mascot, desk, chair, and papers.
 /// `running_count` controls paper stack height.
 ///
 /// Layout: all elements share the same baseline (bottom_area.y - 1).
@@ -296,14 +343,14 @@ fn idle_sprite(motion: IdleMotion) -> Vec<Line<'static>> {
 ///
 /// Working state example:
 /// ```text
-///                     ▄▄
-///                     █▀╴  ████
-///                  ▄▄ ▀▀
+///                     ▄▄  ▐█▌
+///                     █▀╴ ▐█▌
+///                     ▀▀ ████
 /// ```
-/// baseline row: chair ▄▄ + cat feet ▀▀ (cat feet on chair)
-/// row above:    cat body + desk ████
-/// row above:    cat ears
-pub fn draw_cat(frame: &mut Frame, state: &AppState, bottom_area: Rect, running_count: usize) {
+/// baseline row: chair ▄▄ + mascot feet ▀▀ (mascot feet on chair)
+/// row above:    mascot body + desk ████
+/// row above:    mascot head/hand
+pub fn draw_mascot(frame: &mut Frame, state: &AppState, bottom_area: Rect, running_count: usize) {
     let panel_width = bottom_area.width;
     // Baseline: the bottom-most row for all elements
     let baseline = bottom_area.y.saturating_sub(1);
@@ -312,26 +359,26 @@ pub fn draw_cat(frame: &mut Frame, state: &AppState, bottom_area: Rect, running_
     let desk_x = bottom_area.x + panel_width.saturating_sub(DESK_OFFSET + DESK_WIDTH);
     let chair_x = desk_x.saturating_sub(CHAIR_WIDTH + CHAIR_DESK_GAP);
 
-    // --- Draw cat first (so desk/chair render on top if overlapping) ---
-    let sprite_lines = match state.cat_state {
-        CatState::Idle => idle_sprite(idle_motion(state)),
-        CatState::WalkRight => {
-            match state.cat_frame {
+    // --- Draw mascot first (so desk/chair render on top if overlapping) ---
+    let sprite_lines = match state.mascot_state {
+        MascotState::Idle => idle_sprite(idle_motion(state)),
+        MascotState::WalkRight => {
+            match state.mascot_frame {
                 1 => walking_right_1(),
                 2 => walking_right_2(),
                 _ => walking_right_1(),
             }
         }
-        CatState::Working => {
-            match state.cat_frame {
+        MascotState::Working => {
+            match state.mascot_frame {
                 1 => working_sprite_1(),
                 2 => working_sprite_2(),
                 3 => working_sprite_3(),
                 _ => working_sprite_1(),
             }
         }
-        CatState::WalkLeft => {
-            match state.cat_frame {
+        MascotState::WalkLeft => {
+            match state.mascot_frame {
                 1 => walking_left_1(),
                 2 => walking_left_2(),
                 _ => walking_left_1(),
@@ -340,18 +387,18 @@ pub fn draw_cat(frame: &mut Frame, state: &AppState, bottom_area: Rect, running_
     };
 
     let sprite_height = sprite_lines.len() as u16;
-    let cat_y = match state.cat_state {
-        CatState::Working => {
-            // Cat sits on top of chair: 1 row above baseline
+    let mascot_y = match state.mascot_state {
+        MascotState::Working => {
+            // Mascot sits on top of chair: 1 row above baseline
             baseline.saturating_sub(sprite_height)
         }
-        CatState::Idle if matches!(idle_motion(state), IdleMotion::Jump) => {
+        MascotState::Idle if matches!(idle_motion(state), IdleMotion::Jump) => {
             baseline.saturating_sub(sprite_height)
         }
         _ => baseline.saturating_sub(sprite_height - 1),
     };
-    let cat_x = bottom_area.x + state.cat_x;
-    render_lines(frame, &sprite_lines, cat_x, cat_y);
+    let mascot_x = bottom_area.x + state.mascot_x;
+    render_lines(frame, &sprite_lines, mascot_x, mascot_y);
 
     // --- Draw chair (always visible) ---
     let chair_lines = chair_sprite();
@@ -369,8 +416,16 @@ pub fn draw_cat(frame: &mut Frame, state: &AppState, bottom_area: Rect, running_
     if running_count > 0 {
         let papers = paper_sprite(running_count);
         if !papers.is_empty() {
-            let paper_y = desk_y.saturating_sub(papers.len() as u16);
-            let paper_x = desk_x + 1;
+            let paper_y = desk_y.saturating_sub(
+                papers.len() as u16 + working_paper_lift(state),
+            );
+            let paper_x = desk_x
+                + 1
+                + if working_paper_lift(state) == 1 {
+                    state.mascot_working_paper_x_offset
+                } else {
+                    0
+                };
             render_lines(frame, &papers, paper_x, paper_y);
         }
     }
@@ -429,7 +484,7 @@ mod tests {
         assert_eq!(s, [
             " ▄ ▄",
             "▄▀▀▀▄",
-            "▖▖ ▗▗",
+            "▖ ▗  ",
         ].join("\n"));
     }
 
@@ -439,7 +494,7 @@ mod tests {
         assert_eq!(s, [
             " ▄ ▄",
             "▄▀▀▀▄",
-            "▗▗ ▖▖",
+            "▗ ▖  ",
         ].join("\n"));
     }
 
@@ -511,6 +566,7 @@ mod tests {
     fn all_sprites_have_3_lines() {
         assert_eq!(sitting_sprite().len(), 3);
         assert_eq!(sitting_sprite_blink().len(), 3);
+        assert_eq!(sitting_sprite_wave().len(), 3);
         assert_eq!(walking_right_1().len(), 3);
         assert_eq!(walking_right_2().len(), 3);
         assert_eq!(walking_left_1().len(), 3);
@@ -545,30 +601,47 @@ mod tests {
     }
 
     #[test]
+    fn sprite_sitting_wave() {
+        let s = sprite_to_string(&sitting_sprite_wave());
+        assert_eq!(s, [
+            " ▄▘ ▄",
+            "▄▀▀▀▄",
+            " ▀ ▀",
+        ].join("\n"));
+    }
+
+    #[test]
     fn idle_sprite_cycles_through_idle_poses() {
         assert_eq!(sprite_to_string(&idle_sprite(IdleMotion::Rest)), sprite_to_string(&sitting_sprite()));
         assert_eq!(sprite_to_string(&idle_sprite(IdleMotion::Jump)), sprite_to_string(&sitting_sprite()));
         assert_eq!(sprite_to_string(&idle_sprite(IdleMotion::Blink)), sprite_to_string(&sitting_sprite_blink()));
+        assert_eq!(sprite_to_string(&idle_sprite(IdleMotion::Wave)), sprite_to_string(&sitting_sprite_wave()));
     }
 
     #[test]
     fn idle_motion_schedule_is_sparse_and_non_overlapping() {
         let state = AppState::new("%0".into());
-        assert!(state.cat_idle_jump_tick < BOB_INTERVAL);
-        assert!(state.cat_idle_blink_tick < BOB_INTERVAL);
-        assert_ne!(state.cat_idle_jump_tick, state.cat_idle_blink_tick);
-        assert!(state.cat_idle_jump_tick < state.cat_idle_blink_tick);
+        assert!(state.mascot_idle_jump_tick < BOB_INTERVAL);
+        assert!(state.mascot_idle_blink_tick < BOB_INTERVAL);
+        assert_ne!(state.mascot_idle_jump_tick, state.mascot_idle_blink_tick);
+        assert!(state.mascot_idle_jump_tick < state.mascot_idle_blink_tick);
+        assert!(state.mascot_idle_wave_tick < BOB_INTERVAL);
+        if state.mascot_idle_wave_enabled {
+            assert!((16..=19).contains(&state.mascot_idle_wave_tick));
+        } else {
+            assert_eq!(state.mascot_idle_wave_tick, 0);
+        }
     }
 
-    /// Helper: render draw_cat into a buffer and return as string for visual inspection.
-    fn render_cat_scene(state: &AppState, running_count: usize, width: u16, height: u16) -> String {
+    /// Helper: render draw_mascot into a buffer and return as string for visual inspection.
+    fn render_mascot_scene(state: &AppState, running_count: usize, width: u16, height: u16) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         let bottom_y = height.saturating_sub(10);
         terminal
             .draw(|frame| {
                 let bottom_area = Rect::new(0, bottom_y, width, 10);
-                draw_cat(frame, state, bottom_area, running_count);
+                draw_mascot(frame, state, bottom_area, running_count);
             })
             .unwrap();
         let buf = terminal.backend().buffer().clone();
@@ -591,7 +664,7 @@ mod tests {
     #[test]
     fn snapshot_idle() {
         let state = AppState::new("%0".into());
-        let output = render_cat_scene(&state, 0, 40, 14);
+        let output = render_mascot_scene(&state, 0, 40, 14);
         let expected = [
             "",
             "  ▄ ▄",
@@ -602,16 +675,16 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_working() {
+    fn snapshot_working_frame1() {
         let mut state = AppState::new("%0".into());
-        state.cat_state = CatState::Working;
+        state.mascot_state = MascotState::Working;
         let panel_width = 40u16;
         let working_width = CHAIR_WIDTH + 2;
         let stop_x = panel_width
             .saturating_sub(DESK_OFFSET + DESK_WIDTH + working_width);
-        state.cat_x = stop_x;
-        state.cat_frame = 1;
-        let output = render_cat_scene(&state, 2, panel_width, 14);
+        state.mascot_x = stop_x;
+        state.mascot_frame = 1;
+        let output = render_mascot_scene(&state, 2, panel_width, 14);
         let expected = [
             "                                 ▄▄  ▐█▌",
             "                                 █▀╴ ▐█▌",
@@ -622,17 +695,57 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_working_frame2() {
+        let mut state = AppState::new("%0".into());
+        state.mascot_state = MascotState::Working;
+        let panel_width = 40u16;
+        let working_width = CHAIR_WIDTH + 2;
+        let stop_x = panel_width
+            .saturating_sub(DESK_OFFSET + DESK_WIDTH + working_width);
+        state.mascot_x = stop_x;
+        state.mascot_frame = 2;
+        let output = render_mascot_scene(&state, 2, panel_width, 14);
+        let expected = [
+            "                                 ▄▄  ▐█▌",
+            "                                 █▀─ ▐█▌",
+            "                                 ▀▀ ████",
+            "                                 ██ █  █",
+        ].join("\n");
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn snapshot_working_frame3() {
+        let mut state = AppState::new("%0".into());
+        state.mascot_state = MascotState::Working;
+        let panel_width = 40u16;
+        let working_width = CHAIR_WIDTH + 2;
+        let stop_x = panel_width
+            .saturating_sub(DESK_OFFSET + DESK_WIDTH + working_width);
+        state.mascot_x = stop_x;
+        state.mascot_frame = 3;
+        let output = render_mascot_scene(&state, 2, panel_width, 14);
+        let expected = [
+            "                                 ▄▄  ▐█▌",
+            "                                 █▀╶ ▐█▌",
+            "                                 ▀▀ ████",
+            "                                 ██ █  █",
+        ].join("\n");
+        assert_eq!(output, expected);
+    }
+
+    #[test]
     fn snapshot_walking_right() {
         let mut state = AppState::new("%0".into());
-        state.cat_state = CatState::WalkRight;
-        state.cat_x = 15;
-        state.cat_frame = 1;
-        let output = render_cat_scene(&state, 1, 40, 14);
+        state.mascot_state = MascotState::WalkRight;
+        state.mascot_x = 15;
+        state.mascot_frame = 1;
+        let output = render_mascot_scene(&state, 1, 40, 14);
         let expected = [
             "",
             "                ▄ ▄                  ▐█▌",
             "               ▄▀▀▀▄                ████",
-            "               ▖▖ ▗▗             ██ █  █",
+            "               ▖ ▗               ██ █  █",
         ].join("\n");
         assert_eq!(output, expected);
     }
@@ -640,15 +753,15 @@ mod tests {
     #[test]
     fn snapshot_walking_left() {
         let mut state = AppState::new("%0".into());
-        state.cat_state = CatState::WalkLeft;
-        state.cat_x = 15;
-        state.cat_frame = 1;
-        let output = render_cat_scene(&state, 0, 40, 14);
+        state.mascot_state = MascotState::WalkLeft;
+        state.mascot_x = 15;
+        state.mascot_frame = 1;
+        let output = render_mascot_scene(&state, 0, 40, 14);
         let expected = [
             "",
             "                ▄ ▄",
             "               ▄▀▀▀▄                ████",
-            "               ▗▗ ▖▖             ██ █  █",
+            "                 ▗ ▖             ██ █  █",
         ].join("\n");
         assert_eq!(output, expected);
     }

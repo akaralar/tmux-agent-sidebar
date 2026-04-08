@@ -275,18 +275,32 @@ pub struct AppState {
     pub repo_popup_selected: usize,
     pub repo_popup_area: Option<ratatui::layout::Rect>,
     pub repo_button_col: u16,
-    pub cat_state: crate::ui::cat::CatState,
-    /// Cat animation X position (character offset from left of bottom panel).
-    pub cat_x: u16,
-    /// Cat animation frame index (0 = sitting, 1-2 = running).
-    pub cat_frame: usize,
-    pub cat_bob_timer: usize,
+    pub mascot_state: crate::ui::mascot::MascotState,
+    /// Mascot animation X position (character offset from left of bottom panel).
+    pub mascot_x: u16,
+    /// Mascot animation frame index (0 = sitting, 1-4 = running/working).
+    pub mascot_frame: usize,
+    pub mascot_bob_timer: usize,
     /// Idle animation schedule tick for jump motion within the bob cycle.
-    pub cat_idle_jump_tick: usize,
+    pub mascot_idle_jump_tick: usize,
     /// Idle animation schedule tick for blink motion within the bob cycle.
-    pub cat_idle_blink_tick: usize,
+    pub mascot_idle_blink_tick: usize,
+    /// Idle animation schedule tick for the hand-raise motion within the bob cycle.
+    pub mascot_idle_wave_tick: usize,
+    /// Whether the hand-raise motion is enabled for the current idle cycle.
+    pub mascot_idle_wave_enabled: bool,
     /// Seed used to reshuffle idle motion timing.
-    pub cat_idle_seed: usize,
+    pub mascot_idle_seed: usize,
+    /// Current working animation tick, used to pace paper motion.
+    pub mascot_working_paper_timer: usize,
+    /// Tick at which the paper stack should next lift.
+    pub mascot_working_paper_next_lift_tick: usize,
+    /// Tick until which the paper stack stays lifted after a trigger.
+    pub mascot_working_paper_lift_until: usize,
+    /// Horizontal offset applied to the paper stack during a lift.
+    pub mascot_working_paper_x_offset: u16,
+    /// Seed used to reshuffle working paper motion timing.
+    pub mascot_working_paper_seed: usize,
     /// Update notice shown when a newer GitHub release is available.
     pub version_notice: Option<crate::version::UpdateNotice>,
     /// Shared state across sidebar instances, persisted to tmux global variables.
@@ -306,24 +320,41 @@ pub struct HyperlinkOverlay {
     pub url: String,
 }
 
-fn reseed_cat_idle_motion(state: &mut AppState) {
+fn reseed_mascot_idle_motion(state: &mut AppState) {
     const A: usize = 1664525;
     const C: usize = 1013904223;
-    state.cat_idle_seed = state.cat_idle_seed.wrapping_mul(A).wrapping_add(C);
-    let interval = crate::ui::cat::BOB_INTERVAL;
+    state.mascot_idle_seed = state.mascot_idle_seed.wrapping_mul(A).wrapping_add(C);
+    let interval = crate::ui::mascot::BOB_INTERVAL;
     let first_window = (interval / 3).max(1);
     let second_window = (interval / 3).max(1);
-    state.cat_idle_jump_tick = 3 + (state.cat_idle_seed % first_window);
-    state.cat_idle_blink_tick = (interval / 2) + ((state.cat_idle_seed / 7) % second_window);
-    if state.cat_idle_blink_tick >= interval {
-        state.cat_idle_blink_tick = interval.saturating_sub(1);
+    state.mascot_idle_jump_tick = 3 + (state.mascot_idle_seed % first_window);
+    state.mascot_idle_blink_tick = (interval / 2) + ((state.mascot_idle_seed / 7) % second_window);
+    if state.mascot_idle_blink_tick >= interval {
+        state.mascot_idle_blink_tick = interval.saturating_sub(1);
     }
-    if state.cat_idle_blink_tick == state.cat_idle_jump_tick {
-        state.cat_idle_blink_tick = (state.cat_idle_blink_tick + 1) % interval;
+    if state.mascot_idle_blink_tick == state.mascot_idle_jump_tick {
+        state.mascot_idle_blink_tick = (state.mascot_idle_blink_tick + 1) % interval;
     }
-    if state.cat_idle_blink_tick == state.cat_idle_jump_tick {
-        state.cat_idle_blink_tick = (state.cat_idle_blink_tick + 2) % interval;
+    if state.mascot_idle_blink_tick == state.mascot_idle_jump_tick {
+        state.mascot_idle_blink_tick = (state.mascot_idle_blink_tick + 2) % interval;
     }
+    state.mascot_idle_wave_enabled = (state.mascot_idle_seed & 3) == 0;
+    state.mascot_idle_wave_tick = if state.mascot_idle_wave_enabled {
+        16 + ((state.mascot_idle_seed / 11) % 4)
+    } else {
+        0
+    };
+}
+
+fn reseed_mascot_working_paper_motion(state: &mut AppState) {
+    const A: usize = 1103515245;
+    const C: usize = 12345;
+    state.mascot_working_paper_seed = state
+        .mascot_working_paper_seed
+        .wrapping_mul(A)
+        .wrapping_add(C);
+    let delay = 10 + (state.mascot_working_paper_seed % 18);
+    state.mascot_working_paper_next_lift_tick = state.mascot_working_paper_timer + delay;
 }
 
 impl AppState {
@@ -356,20 +387,27 @@ impl AppState {
             repo_popup_selected: 0,
             repo_popup_area: None,
             repo_button_col: u16::MAX,
-            cat_state: crate::ui::cat::CatState::Idle,
-            cat_x: crate::ui::cat::CAT_HOME_X,
-            cat_frame: 0,
-            cat_bob_timer: 0,
-            cat_idle_jump_tick: 8,
-            cat_idle_blink_tick: 24,
-            cat_idle_seed: 1,
+            mascot_state: crate::ui::mascot::MascotState::Idle,
+            mascot_x: crate::ui::mascot::MASCOT_HOME_X,
+            mascot_frame: 0,
+            mascot_bob_timer: 0,
+            mascot_idle_jump_tick: 8,
+            mascot_idle_blink_tick: 24,
+            mascot_idle_wave_tick: 0,
+            mascot_idle_wave_enabled: false,
+            mascot_idle_seed: 1,
+            mascot_working_paper_timer: 0,
+            mascot_working_paper_next_lift_tick: 0,
+            mascot_working_paper_lift_until: 0,
+            mascot_working_paper_x_offset: 0,
+            mascot_working_paper_seed: 1,
             version_notice: None,
             global: GlobalState::new(),
             hyperlink_overlays: vec![],
             port_scan_initialized: false,
             last_port_refresh: Instant::now(),
         };
-        reseed_cat_idle_motion(&mut state);
+        reseed_mascot_idle_motion(&mut state);
         state
     }
 
@@ -698,8 +736,8 @@ impl AppState {
         self.repo_popup_open = false;
     }
 
-    /// Advance cat animation state. Called every spinner tick (200ms).
-    pub fn tick_cat(&mut self, panel_width: u16) {
+    /// Advance mascot animation state. Called every spinner tick (200ms).
+    pub fn tick_mascot(&mut self, panel_width: u16) {
         let running_count = self
             .repo_groups
             .iter()
@@ -707,62 +745,92 @@ impl AppState {
             .filter(|(p, _)| p.status == crate::tmux::PaneStatus::Running)
             .count();
 
-        // Cat stops so working sprite (chair+feet = 4 chars) is adjacent to desk
-        let working_width = crate::ui::cat::CHAIR_WIDTH + 2; // chair + cat feet
+        // Mascot stops so working sprite (chair+feet = 4 chars) is adjacent to desk
+        let working_width = crate::ui::mascot::CHAIR_WIDTH + 2; // chair + mascot feet
         let stop_x = panel_width.saturating_sub(
-            crate::ui::cat::DESK_OFFSET + crate::ui::cat::DESK_WIDTH + working_width,
+            crate::ui::mascot::DESK_OFFSET + crate::ui::mascot::DESK_WIDTH + working_width,
         );
 
         fn walk_step(distance: u16) -> u16 {
             if distance > 8 { 2 } else { 1 }
         }
 
-        match self.cat_state {
-            crate::ui::cat::CatState::Idle => {
+        match self.mascot_state {
+            crate::ui::mascot::MascotState::Idle => {
                 if running_count > 0 {
-                    self.cat_state = crate::ui::cat::CatState::WalkRight;
-                    self.cat_frame = 0;
-                    self.cat_x = self.cat_x.saturating_add(1);
+                    self.mascot_state = crate::ui::mascot::MascotState::WalkRight;
+                    self.mascot_frame = 0;
+                    self.mascot_x = self.mascot_x.saturating_add(1);
                 } else {
-                    self.cat_bob_timer = (self.cat_bob_timer + 1) % crate::ui::cat::BOB_INTERVAL;
-                    if self.cat_bob_timer == 0 {
-                        reseed_cat_idle_motion(self);
+                    self.mascot_bob_timer = (self.mascot_bob_timer + 1) % crate::ui::mascot::BOB_INTERVAL;
+                    if self.mascot_bob_timer == 0 {
+                        reseed_mascot_idle_motion(self);
                     }
                 }
             }
-            crate::ui::cat::CatState::WalkRight => {
-                let remaining = stop_x.saturating_sub(self.cat_x);
+            crate::ui::mascot::MascotState::WalkRight => {
+                if running_count == 0 {
+                    self.mascot_state = crate::ui::mascot::MascotState::WalkLeft;
+                    self.mascot_frame = 0;
+                    return;
+                }
+                let remaining = stop_x.saturating_sub(self.mascot_x);
                 let step = walk_step(remaining);
-                self.cat_x = self.cat_x.saturating_add(step);
-                self.cat_frame = if self.cat_frame == 1 { 2 } else { 1 };
-                if self.cat_x >= stop_x {
-                    self.cat_x = stop_x;
-                    self.cat_state = crate::ui::cat::CatState::Working;
-                    self.cat_frame = 0;
+                self.mascot_x = self.mascot_x.saturating_add(step);
+                self.mascot_frame = if self.mascot_frame == 1 { 2 } else { 1 };
+                if self.mascot_x >= stop_x {
+                    self.mascot_x = stop_x;
+                    self.mascot_state = crate::ui::mascot::MascotState::Working;
+                    self.mascot_frame = 0;
+                    self.mascot_working_paper_timer = 0;
+                    reseed_mascot_working_paper_motion(self);
                 }
             }
-            crate::ui::cat::CatState::Working => {
-                self.cat_frame = match self.cat_frame {
+            crate::ui::mascot::MascotState::Working => {
+                if self.mascot_working_paper_next_lift_tick == 0 {
+                    reseed_mascot_working_paper_motion(self);
+                }
+                self.mascot_working_paper_timer = self.mascot_working_paper_timer.saturating_add(1);
+                if self.mascot_working_paper_timer >= self.mascot_working_paper_next_lift_tick {
+                    self.mascot_working_paper_lift_until = self.mascot_working_paper_timer + 2;
+                    self.mascot_working_paper_x_offset = (self.mascot_working_paper_seed & 1) as u16;
+                    reseed_mascot_working_paper_motion(self);
+                }
+                self.mascot_frame = match self.mascot_frame {
                     1 => 2,
                     2 => 3,
                     _ => 1,
                 };
                 if running_count == 0 {
-                    self.cat_state = crate::ui::cat::CatState::WalkLeft;
-                    self.cat_frame = 0;
+                    self.mascot_state = crate::ui::mascot::MascotState::WalkLeft;
+                    self.mascot_frame = 0;
+                    self.mascot_working_paper_timer = 0;
+                    self.mascot_working_paper_next_lift_tick = 0;
+                    self.mascot_working_paper_lift_until = 0;
+                    self.mascot_working_paper_x_offset = 0;
+                    self.mascot_working_paper_seed = 1;
                 }
             }
-            crate::ui::cat::CatState::WalkLeft => {
-                let remaining = self.cat_x.saturating_sub(crate::ui::cat::CAT_HOME_X);
+            crate::ui::mascot::MascotState::WalkLeft => {
+                if running_count > 0 {
+                    self.mascot_state = crate::ui::mascot::MascotState::WalkRight;
+                    self.mascot_frame = 0;
+                    return;
+                }
+                let remaining = self.mascot_x.saturating_sub(crate::ui::mascot::MASCOT_HOME_X);
                 let step = walk_step(remaining);
-                self.cat_x = self.cat_x.saturating_sub(step);
-                self.cat_frame = if self.cat_frame == 1 { 2 } else { 1 };
-                if self.cat_x <= crate::ui::cat::CAT_HOME_X {
-                    self.cat_x = crate::ui::cat::CAT_HOME_X;
-                    self.cat_state = crate::ui::cat::CatState::Idle;
-                    self.cat_frame = 0;
-                    self.cat_bob_timer = 0;
-                    reseed_cat_idle_motion(self);
+                self.mascot_x = self.mascot_x.saturating_sub(step);
+                self.mascot_frame = if self.mascot_frame == 1 { 2 } else { 1 };
+                if self.mascot_x <= crate::ui::mascot::MASCOT_HOME_X {
+                    self.mascot_x = crate::ui::mascot::MASCOT_HOME_X;
+                    self.mascot_state = crate::ui::mascot::MascotState::Idle;
+                    self.mascot_frame = 0;
+                    self.mascot_bob_timer = 0;
+                    self.mascot_working_paper_timer = 0;
+                    self.mascot_working_paper_next_lift_tick = 0;
+                    self.mascot_working_paper_lift_until = 0;
+                    self.mascot_working_paper_x_offset = 0;
+                    reseed_mascot_idle_motion(self);
                 }
             }
         }
@@ -2359,19 +2427,29 @@ mod tests {
     }
 
     #[test]
-    fn cat_state_defaults() {
+    fn mascot_state_defaults() {
         let state = AppState::new("%0".into());
-        assert!(matches!(state.cat_state, crate::ui::cat::CatState::Idle));
-        assert_eq!(state.cat_x, crate::ui::cat::CAT_HOME_X);
-        assert_eq!(state.cat_frame, 0);
-        assert_eq!(state.cat_bob_timer, 0);
-        assert!(state.cat_idle_jump_tick < crate::ui::cat::BOB_INTERVAL);
-        assert!(state.cat_idle_blink_tick < crate::ui::cat::BOB_INTERVAL);
-        assert_ne!(state.cat_idle_jump_tick, state.cat_idle_blink_tick);
+        assert!(matches!(state.mascot_state, crate::ui::mascot::MascotState::Idle));
+        assert_eq!(state.mascot_x, crate::ui::mascot::MASCOT_HOME_X);
+        assert_eq!(state.mascot_frame, 0);
+        assert_eq!(state.mascot_bob_timer, 0);
+        assert_eq!(state.mascot_working_paper_timer, 0);
+        assert_eq!(state.mascot_working_paper_next_lift_tick, 0);
+        assert_eq!(state.mascot_working_paper_lift_until, 0);
+        assert_eq!(state.mascot_working_paper_x_offset, 0);
+        assert!(state.mascot_idle_jump_tick < crate::ui::mascot::BOB_INTERVAL);
+        assert!(state.mascot_idle_blink_tick < crate::ui::mascot::BOB_INTERVAL);
+        assert_ne!(state.mascot_idle_jump_tick, state.mascot_idle_blink_tick);
+        assert!(state.mascot_idle_wave_tick < crate::ui::mascot::BOB_INTERVAL);
+        if state.mascot_idle_wave_enabled {
+            assert!((16..=19).contains(&state.mascot_idle_wave_tick));
+        } else {
+            assert_eq!(state.mascot_idle_wave_tick, 0);
+        }
     }
 
     #[test]
-    fn tick_cat_idle_to_walk_right_on_running() {
+    fn tick_mascot_idle_to_walk_right_on_running() {
         let mut state = AppState::new("%0".into());
         let mut pane = test_pane("1");
         pane.status = PaneStatus::Running;
@@ -2380,16 +2458,16 @@ mod tests {
             has_focus: false,
             panes: vec![(pane, PaneGitInfo::default())],
         }];
-        state.tick_cat(60);
+        state.tick_mascot(60);
         assert!(matches!(
-            state.cat_state,
-            crate::ui::cat::CatState::WalkRight
+            state.mascot_state,
+            crate::ui::mascot::MascotState::WalkRight
         ));
-        assert!(state.cat_x > crate::ui::cat::CAT_HOME_X);
+        assert!(state.mascot_x > crate::ui::mascot::MASCOT_HOME_X);
     }
 
     #[test]
-    fn tick_cat_walk_right_to_working_at_desk() {
+    fn tick_mascot_walk_right_to_working_at_desk() {
         let mut state = AppState::new("%0".into());
         let mut pane = test_pane("1");
         pane.status = PaneStatus::Running;
@@ -2399,18 +2477,18 @@ mod tests {
             panes: vec![(pane, PaneGitInfo::default())],
         }];
         let panel_width = 60u16;
-        let working_width = crate::ui::cat::CHAIR_WIDTH + 2;
+        let working_width = crate::ui::mascot::CHAIR_WIDTH + 2;
         let stop_x = panel_width.saturating_sub(
-            crate::ui::cat::DESK_OFFSET + crate::ui::cat::DESK_WIDTH + working_width,
+            crate::ui::mascot::DESK_OFFSET + crate::ui::mascot::DESK_WIDTH + working_width,
         );
-        state.cat_state = crate::ui::cat::CatState::WalkRight;
-        state.cat_x = stop_x - 1;
-        state.tick_cat(panel_width);
-        assert!(matches!(state.cat_state, crate::ui::cat::CatState::Working));
+        state.mascot_state = crate::ui::mascot::MascotState::WalkRight;
+        state.mascot_x = stop_x - 1;
+        state.tick_mascot(panel_width);
+        assert!(matches!(state.mascot_state, crate::ui::mascot::MascotState::Working));
     }
 
     #[test]
-    fn tick_cat_working_to_walk_left_when_no_running() {
+    fn tick_mascot_walk_right_returns_to_walk_left_when_running_stops() {
         let mut state = AppState::new("%0".into());
         let mut pane = test_pane("1");
         pane.status = PaneStatus::Idle;
@@ -2419,32 +2497,78 @@ mod tests {
             has_focus: false,
             panes: vec![(pane, PaneGitInfo::default())],
         }];
-        state.cat_state = crate::ui::cat::CatState::Working;
-        state.cat_x = 40;
-        state.tick_cat(60);
+        state.mascot_state = crate::ui::mascot::MascotState::WalkRight;
+        state.mascot_x = 20;
+
+        state.tick_mascot(60);
+
         assert!(matches!(
-            state.cat_state,
-            crate::ui::cat::CatState::WalkLeft
+            state.mascot_state,
+            crate::ui::mascot::MascotState::WalkLeft
+        ));
+        assert_eq!(state.mascot_frame, 0);
+        assert_eq!(state.mascot_x, 20);
+    }
+
+    #[test]
+    fn tick_mascot_working_to_walk_left_when_no_running() {
+        let mut state = AppState::new("%0".into());
+        let mut pane = test_pane("1");
+        pane.status = PaneStatus::Idle;
+        state.repo_groups = vec![crate::group::RepoGroup {
+            name: "repo".into(),
+            has_focus: false,
+            panes: vec![(pane, PaneGitInfo::default())],
+        }];
+        state.mascot_state = crate::ui::mascot::MascotState::Working;
+        state.mascot_x = 40;
+        state.tick_mascot(60);
+        assert!(matches!(
+            state.mascot_state,
+            crate::ui::mascot::MascotState::WalkLeft
         ));
     }
 
     #[test]
-    fn tick_cat_walk_left_to_idle_at_home() {
+    fn tick_mascot_walk_left_returns_to_walk_right_when_running_resumes() {
         let mut state = AppState::new("%0".into());
-        state.cat_state = crate::ui::cat::CatState::WalkLeft;
-        state.cat_x = crate::ui::cat::CAT_HOME_X + 1;
-        state.tick_cat(60);
-        assert_eq!(state.cat_x, crate::ui::cat::CAT_HOME_X);
-        state.tick_cat(60);
-        assert!(matches!(state.cat_state, crate::ui::cat::CatState::Idle));
+        let mut pane = test_pane("1");
+        pane.status = PaneStatus::Running;
+        state.repo_groups = vec![crate::group::RepoGroup {
+            name: "repo".into(),
+            has_focus: false,
+            panes: vec![(pane, PaneGitInfo::default())],
+        }];
+        state.mascot_state = crate::ui::mascot::MascotState::WalkLeft;
+        state.mascot_x = 20;
+
+        state.tick_mascot(60);
+
+        assert!(matches!(
+            state.mascot_state,
+            crate::ui::mascot::MascotState::WalkRight
+        ));
+        assert_eq!(state.mascot_frame, 0);
+        assert_eq!(state.mascot_x, 20);
     }
 
     #[test]
-    fn tick_cat_idle_bob() {
+    fn tick_mascot_walk_left_to_idle_at_home() {
         let mut state = AppState::new("%0".into());
-        for _ in 0..crate::ui::cat::BOB_INTERVAL {
-            state.tick_cat(60);
+        state.mascot_state = crate::ui::mascot::MascotState::WalkLeft;
+        state.mascot_x = crate::ui::mascot::MASCOT_HOME_X + 1;
+        state.tick_mascot(60);
+        assert_eq!(state.mascot_x, crate::ui::mascot::MASCOT_HOME_X);
+        state.tick_mascot(60);
+        assert!(matches!(state.mascot_state, crate::ui::mascot::MascotState::Idle));
+    }
+
+    #[test]
+    fn tick_mascot_idle_bob() {
+        let mut state = AppState::new("%0".into());
+        for _ in 0..crate::ui::mascot::BOB_INTERVAL {
+            state.tick_mascot(60);
         }
-        assert_eq!(state.cat_bob_timer, 0);
+        assert_eq!(state.mascot_bob_timer, 0);
     }
 }

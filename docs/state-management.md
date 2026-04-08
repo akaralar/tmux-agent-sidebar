@@ -82,10 +82,10 @@ Per-pane file-based state:
 | `theme` | Once at startup | Color theme from tmux `@sidebar_color_*` variables |
 | `repo_popup_open` | On user input | Repo filter popup visibility |
 | `repo_popup_selected` | On user input | Selected index in repo popup |
-| `cat_state` | Every 200ms (animation) | `Idle` / `WalkRight` / `Working` / `WalkLeft` |
-| `cat_x` | Every 200ms (animation) | Cat X position |
-| `cat_frame` | Every 200ms (animation) | Animation frame counter |
-| `cat_bob_timer` | Every 200ms (animation) | Idle bob motion timer |
+| `mascot_state` | Every 200ms (animation) | `Idle` / `WalkRight` / `Working` / `WalkLeft` |
+| `mascot_x` | Every 200ms (animation) | Mascot X position |
+| `mascot_frame` | Every 200ms (animation) | Animation frame counter |
+| `mascot_bob_timer` | Every 200ms (animation) | Idle bob motion timer |
 | `spinner_frame` | Every 200ms (animation) | Spinner animation frame counter |
 | `tmux_pane` | Once at startup | This sidebar's own tmux pane ID |
 | `activity_max_entries` | Once at startup | Max activity log entries to display |
@@ -103,7 +103,7 @@ Per-pane file-based state:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Every frame (~200ms)                                       │
-│  line_to_row, scroll dimensions, cat animation              │
+│  line_to_row, scroll dimensions, mascot animation           │
 ├─────────────────────────────────────────────────────────────┤
 │  Every 1s (refresh cycle)                                   │
 │  sessions, repo_groups, focused_pane_id, pane_row_targets, │

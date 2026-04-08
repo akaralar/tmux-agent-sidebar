@@ -568,7 +568,7 @@ mod tests {
         let path = crate::activity::log_file_path(pane_id);
         let _ = fs::remove_file(&path);
 
-        write_activity_entry(pane_id, "Bash", "cat file | grep foo\nbar");
+        write_activity_entry(pane_id, "Bash", "echo file | grep foo\nbar");
 
         let content = fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.lines().collect();
