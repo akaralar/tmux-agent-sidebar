@@ -42,7 +42,7 @@ impl PermissionMode {
         match s {
             "plan" => Self::Plan,
             "acceptEdits" => Self::AcceptEdits,
-            "auto" => Self::Auto,
+            "auto" | "dontAsk" => Self::Auto,
             "bypassPermissions" => Self::BypassPermissions,
             _ => Self::Default,
         }
@@ -510,9 +510,7 @@ pub fn display_message(target: &str, format: &str) -> String {
 
 pub fn select_pane(pane_id: &str) {
     // Find the session containing this pane and switch to it first
-    if let Some(session_id) =
-        run_tmux(&["display-message", "-t", pane_id, "-p", "#{session_id}"])
-    {
+    if let Some(session_id) = run_tmux(&["display-message", "-t", pane_id, "-p", "#{session_id}"]) {
         let session_id = session_id.trim();
         if !session_id.is_empty() {
             let _ = run_tmux(&["switch-client", "-t", session_id]);
@@ -576,7 +574,7 @@ mod tests {
             PermissionMode::AcceptEdits
         );
         assert_eq!(PermissionMode::from_str("auto"), PermissionMode::Auto);
-        assert_eq!(PermissionMode::from_str("dontAsk"), PermissionMode::Default);
+        assert_eq!(PermissionMode::from_str("dontAsk"), PermissionMode::Auto);
         assert_eq!(
             PermissionMode::from_str("bypassPermissions"),
             PermissionMode::BypassPermissions
@@ -592,7 +590,14 @@ mod tests {
         assert_eq!(PermissionMode::AcceptEdits.badge(), "edit");
         assert_eq!(PermissionMode::Auto.badge(), "auto");
         assert_eq!(PermissionMode::BypassPermissions.badge(), "!");
-        assert_eq!(PermissionMode::BypassPermissions.badge(), "!");
+    }
+
+    #[test]
+    fn dont_ask_maps_to_auto_badge() {
+        // dontAsk should behave identically to auto in the UI
+        let mode = PermissionMode::from_str("dontAsk");
+        assert_eq!(mode, PermissionMode::Auto);
+        assert_eq!(mode.badge(), "auto");
     }
 
     #[test]

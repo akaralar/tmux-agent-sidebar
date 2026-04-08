@@ -12,7 +12,7 @@ impl ActivityEntry {
     pub fn tool_color_index(&self) -> u8 {
         match self.tool.as_str() {
             "Edit" | "Write" => 180,         // soft yellow
-            "Bash" => 114,                   // soft green
+            "Bash" | "PowerShell" => 114,    // soft green
             "Read" | "Glob" | "Grep" => 110, // soft blue
             "Agent" => 181,                  // soft pink
             "WebFetch" | "WebSearch" => 117, // soft cyan
@@ -243,6 +243,13 @@ mod tests {
             label: "".into(),
         };
         assert_eq!(entry.tool_color_index(), 250);
+
+        let entry = ActivityEntry {
+            timestamp: "10:00".into(),
+            tool: "PowerShell".into(),
+            label: "Get-Process".into(),
+        };
+        assert_eq!(entry.tool_color_index(), 114);
 
         let entry = ActivityEntry {
             timestamp: "10:00".into(),

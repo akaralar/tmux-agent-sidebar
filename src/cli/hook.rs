@@ -25,6 +25,22 @@ fn resolve_cwd<'a>(raw_cwd: &'a str, worktree: &'a Option<WorktreeInfo>) -> &'a 
     raw_cwd
 }
 
+/// Sync worktree name/branch pane options from hook payload.
+/// Clears both options when worktree is None.
+fn sync_worktree_meta(pane: &str, worktree: &Option<WorktreeInfo>) {
+    if let Some(wt) = worktree {
+        if !wt.name.is_empty() {
+            tmux::set_pane_option(pane, "@pane_worktree_name", &wt.name);
+        }
+        if !wt.branch.is_empty() {
+            tmux::set_pane_option(pane, "@pane_worktree_branch", &wt.branch);
+        }
+    } else {
+        tmux::unset_pane_option(pane, "@pane_worktree_name");
+        tmux::unset_pane_option(pane, "@pane_worktree_branch");
+    }
+}
+
 fn set_agent_meta(
     pane: &str,
     agent: &str,
@@ -43,18 +59,7 @@ fn set_agent_meta(
     if !permission_mode.is_empty() {
         tmux::set_pane_option(pane, "@pane_permission_mode", permission_mode);
     }
-    // Store hook-provided worktree metadata for TUI
-    if let Some(wt) = worktree {
-        if !wt.name.is_empty() {
-            tmux::set_pane_option(pane, "@pane_worktree_name", &wt.name);
-        }
-        if !wt.branch.is_empty() {
-            tmux::set_pane_option(pane, "@pane_worktree_branch", &wt.branch);
-        }
-    } else {
-        tmux::unset_pane_option(pane, "@pane_worktree_name");
-        tmux::unset_pane_option(pane, "@pane_worktree_branch");
-    }
+    sync_worktree_meta(pane, worktree);
 }
 
 fn clear_run_state(pane: &str) {
@@ -313,6 +318,27 @@ fn handle_event(pane: &str, event: AgentEvent) -> i32 {
                     tmux::set_pane_option(pane, "@pane_cwd", effective);
                 }
             }
+            sync_worktree_meta(pane, &worktree);
+        }
+        AgentEvent::TaskCreated { .. } => {
+            // Redundant with activity-log; TaskCreate tool use already recorded
+        }
+        AgentEvent::TaskCompleted { .. } => {
+            set_attention(pane, "notification");
+        }
+        AgentEvent::TeammateIdle { teammate_name, .. } => {
+            set_attention(pane, "notification");
+            let reason = format!("teammate_idle:{}", teammate_name);
+            tmux::set_pane_option(pane, "@pane_wait_reason", &reason);
+        }
+        AgentEvent::WorktreeCreate => {
+            // No-op: worktree metadata arrives via SessionStart/CwdChanged
+        }
+        AgentEvent::WorktreeRemove { .. } => {
+            sync_worktree_meta(pane, &None);
+            // Clear hook-set cwd so query_sessions() falls back to
+            // pane_current_path, avoiding stale worktree path association.
+            tmux::unset_pane_option(pane, "@pane_cwd");
         }
     }
     0

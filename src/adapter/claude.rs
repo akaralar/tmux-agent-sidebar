@@ -90,10 +90,18 @@ impl EventAdapter for ClaudeAdapter {
                 agent_id: parse_agent_id(input),
             }),
             "stop-failure" => {
-                let error_type = json_str(input, "error");
+                // Upstream fields: error_type (category), error_message (detail)
+                // Legacy fields: error, error_details
+                let error_type = json_str(input, "error_type");
+                let error_legacy = json_str(input, "error");
+                let error_message = json_str(input, "error_message");
                 let error_details = json_str(input, "error_details");
                 let error = if !error_type.is_empty() {
                     error_type
+                } else if !error_legacy.is_empty() {
+                    error_legacy
+                } else if !error_message.is_empty() {
+                    error_message
                 } else {
                     error_details
                 };
@@ -147,6 +155,22 @@ impl EventAdapter for ClaudeAdapter {
                     tool_response: parse_json_field(input, "tool_response"),
                 })
             }
+            "task-created" => Some(AgentEvent::TaskCreated {
+                task_id: json_str(input, "task_id").into(),
+                task_subject: json_str(input, "task_subject").into(),
+            }),
+            "task-completed" => Some(AgentEvent::TaskCompleted {
+                task_id: json_str(input, "task_id").into(),
+                task_subject: json_str(input, "task_subject").into(),
+            }),
+            "teammate-idle" => Some(AgentEvent::TeammateIdle {
+                teammate_name: json_str(input, "teammate_name").into(),
+                team_name: json_str(input, "team_name").into(),
+            }),
+            "worktree-create" => Some(AgentEvent::WorktreeCreate),
+            "worktree-remove" => Some(AgentEvent::WorktreeRemove {
+                worktree_path: json_str(input, "worktree_path").into(),
+            }),
             _ => None,
         }
     }
@@ -261,7 +285,25 @@ mod tests {
     }
 
     #[test]
-    fn stop_failure_error_field() {
+    fn stop_failure_upstream_error_type_field() {
+        let adapter = ClaudeAdapter;
+        let input = json!({"cwd": "/tmp", "permission_mode": "default", "error_type": "rate_limit", "error_message": "too many requests"});
+        let event = adapter.parse("stop-failure", &input).unwrap();
+        assert_eq!(
+            event,
+            AgentEvent::StopFailure {
+                agent: "claude".into(),
+                cwd: "/tmp".into(),
+                permission_mode: "default".into(),
+                error: "rate_limit".into(),
+                worktree: None,
+                agent_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn stop_failure_legacy_error_field() {
         let adapter = ClaudeAdapter;
         let input = json!({"cwd": "/tmp", "permission_mode": "default", "error": "rate_limit", "error_details": "too many"});
         let event = adapter.parse("stop-failure", &input).unwrap();
@@ -272,6 +314,24 @@ mod tests {
                 cwd: "/tmp".into(),
                 permission_mode: "default".into(),
                 error: "rate_limit".into(),
+                worktree: None,
+                agent_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn stop_failure_falls_back_to_error_message() {
+        let adapter = ClaudeAdapter;
+        let input = json!({"cwd": "/tmp", "permission_mode": "default", "error_message": "something went wrong"});
+        let event = adapter.parse("stop-failure", &input).unwrap();
+        assert_eq!(
+            event,
+            AgentEvent::StopFailure {
+                agent: "claude".into(),
+                cwd: "/tmp".into(),
+                permission_mode: "default".into(),
+                error: "something went wrong".into(),
                 worktree: None,
                 agent_id: None,
             }
@@ -363,6 +423,239 @@ mod tests {
     }
 
     #[test]
+    fn task_created() {
+        let adapter = ClaudeAdapter;
+        let input = json!({"task_id": "42", "task_subject": "Fix bug"});
+        assert_eq!(
+            adapter.parse("task-created", &input).unwrap(),
+            AgentEvent::TaskCreated {
+                task_id: "42".into(),
+                task_subject: "Fix bug".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn task_completed() {
+        let adapter = ClaudeAdapter;
+        let input = json!({"task_id": "42", "task_subject": "Fix bug"});
+        assert_eq!(
+            adapter.parse("task-completed", &input).unwrap(),
+            AgentEvent::TaskCompleted {
+                task_id: "42".into(),
+                task_subject: "Fix bug".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn teammate_idle() {
+        let adapter = ClaudeAdapter;
+        let input = json!({"teammate_name": "reviewer", "team_name": "dev"});
+        assert_eq!(
+            adapter.parse("teammate-idle", &input).unwrap(),
+            AgentEvent::TeammateIdle {
+                teammate_name: "reviewer".into(),
+                team_name: "dev".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn worktree_create() {
+        let adapter = ClaudeAdapter;
+        assert_eq!(
+            adapter.parse("worktree-create", &json!({})).unwrap(),
+            AgentEvent::WorktreeCreate
+        );
+    }
+
+    #[test]
+    fn worktree_remove() {
+        let adapter = ClaudeAdapter;
+        let input = json!({"worktree_path": "/tmp/wt"});
+        assert_eq!(
+            adapter.parse("worktree-remove", &input).unwrap(),
+            AgentEvent::WorktreeRemove {
+                worktree_path: "/tmp/wt".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn task_created_empty_fields() {
+        let adapter = ClaudeAdapter;
+        assert_eq!(
+            adapter.parse("task-created", &json!({})).unwrap(),
+            AgentEvent::TaskCreated {
+                task_id: "".into(),
+                task_subject: "".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn task_completed_empty_fields() {
+        let adapter = ClaudeAdapter;
+        assert_eq!(
+            adapter.parse("task-completed", &json!({})).unwrap(),
+            AgentEvent::TaskCompleted {
+                task_id: "".into(),
+                task_subject: "".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn teammate_idle_empty_fields() {
+        let adapter = ClaudeAdapter;
+        assert_eq!(
+            adapter.parse("teammate-idle", &json!({})).unwrap(),
+            AgentEvent::TeammateIdle {
+                teammate_name: "".into(),
+                team_name: "".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn worktree_remove_empty_path() {
+        let adapter = ClaudeAdapter;
+        assert_eq!(
+            adapter.parse("worktree-remove", &json!({})).unwrap(),
+            AgentEvent::WorktreeRemove {
+                worktree_path: "".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn task_created_full_upstream_payload() {
+        let adapter = ClaudeAdapter;
+        let input = json!({
+            "session_id": "sess-1",
+            "transcript_path": "/tmp/transcript",
+            "cwd": "/home/user/project",
+            "permission_mode": "auto",
+            "hook_event_name": "TaskCreated",
+            "task_id": "99",
+            "task_subject": "Deploy to staging",
+            "task_description": "Run deployment pipeline",
+            "teammate_name": "deployer",
+            "team_name": "ops"
+        });
+        let event = adapter.parse("task-created", &input).unwrap();
+        assert_eq!(
+            event,
+            AgentEvent::TaskCreated {
+                task_id: "99".into(),
+                task_subject: "Deploy to staging".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn task_completed_full_upstream_payload() {
+        let adapter = ClaudeAdapter;
+        let input = json!({
+            "session_id": "sess-1",
+            "transcript_path": "/tmp/transcript",
+            "cwd": "/home/user/project",
+            "permission_mode": "auto",
+            "hook_event_name": "TaskCompleted",
+            "task_id": "99",
+            "task_subject": "Deploy to staging",
+            "teammate_name": "deployer",
+            "team_name": "ops"
+        });
+        let event = adapter.parse("task-completed", &input).unwrap();
+        assert_eq!(
+            event,
+            AgentEvent::TaskCompleted {
+                task_id: "99".into(),
+                task_subject: "Deploy to staging".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn teammate_idle_full_upstream_payload() {
+        let adapter = ClaudeAdapter;
+        let input = json!({
+            "session_id": "sess-1",
+            "transcript_path": "/tmp/transcript",
+            "cwd": "/home/user/project",
+            "permission_mode": "auto",
+            "hook_event_name": "TeammateIdle",
+            "teammate_name": "code-reviewer",
+            "team_name": "review-team"
+        });
+        let event = adapter.parse("teammate-idle", &input).unwrap();
+        assert_eq!(
+            event,
+            AgentEvent::TeammateIdle {
+                teammate_name: "code-reviewer".into(),
+                team_name: "review-team".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn worktree_create_full_upstream_payload() {
+        let adapter = ClaudeAdapter;
+        let input = json!({
+            "session_id": "sess-1",
+            "transcript_path": "/tmp/transcript",
+            "cwd": "/home/user/project",
+            "hook_event_name": "WorktreeCreate",
+            "agent_id": "sub-1"
+        });
+        assert_eq!(
+            adapter.parse("worktree-create", &input).unwrap(),
+            AgentEvent::WorktreeCreate
+        );
+    }
+
+    #[test]
+    fn worktree_remove_full_upstream_payload() {
+        let adapter = ClaudeAdapter;
+        let input = json!({
+            "session_id": "sess-1",
+            "transcript_path": "/tmp/transcript",
+            "cwd": "/home/user/project",
+            "hook_event_name": "WorktreeRemove",
+            "worktree_path": "/tmp/worktrees/feat-branch",
+            "agent_id": "sub-1"
+        });
+        let event = adapter.parse("worktree-remove", &input).unwrap();
+        assert_eq!(
+            event,
+            AgentEvent::WorktreeRemove {
+                worktree_path: "/tmp/worktrees/feat-branch".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn stop_failure_full_upstream_payload() {
+        let adapter = ClaudeAdapter;
+        let input = json!({
+            "session_id": "sess-1",
+            "transcript_path": "/tmp/transcript",
+            "cwd": "/home/user/project",
+            "permission_mode": "auto",
+            "hook_event_name": "StopFailure",
+            "error_type": "rate_limit",
+            "error_message": "Rate limit exceeded, please retry in 30s"
+        });
+        let event = adapter.parse("stop-failure", &input).unwrap();
+        match event {
+            AgentEvent::StopFailure { error, .. } => assert_eq!(error, "rate_limit"),
+            other => panic!("expected StopFailure, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn unknown_event_ignored() {
         let adapter = ClaudeAdapter;
         assert!(adapter.parse("unknown-event", &json!({})).is_none());
@@ -387,6 +680,63 @@ mod tests {
                 permission_mode: "default".into(),
                 wait_reason: "".into(),
                 meta_only: false,
+                worktree: None,
+                agent_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn stop_failure_legacy_error_beats_error_message() {
+        let adapter = ClaudeAdapter;
+        let input = json!({
+            "cwd": "/tmp",
+            "permission_mode": "default",
+            "error": "legacy_wins",
+            "error_message": "should_not_win"
+        });
+        let event = adapter.parse("stop-failure", &input).unwrap();
+        match event {
+            AgentEvent::StopFailure { error, .. } => assert_eq!(error, "legacy_wins"),
+            other => panic!("expected StopFailure, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn stop_failure_error_message_beats_error_details() {
+        let adapter = ClaudeAdapter;
+        let input = json!({
+            "cwd": "/tmp",
+            "permission_mode": "default",
+            "error_message": "msg_wins",
+            "error_details": "should_not_win"
+        });
+        let event = adapter.parse("stop-failure", &input).unwrap();
+        match event {
+            AgentEvent::StopFailure { error, .. } => assert_eq!(error, "msg_wins"),
+            other => panic!("expected StopFailure, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn stop_failure_error_type_takes_priority_over_legacy() {
+        let adapter = ClaudeAdapter;
+        let input = json!({
+            "cwd": "/tmp",
+            "permission_mode": "default",
+            "error_type": "rate_limit",
+            "error": "legacy_error",
+            "error_message": "detail msg",
+            "error_details": "legacy detail"
+        });
+        let event = adapter.parse("stop-failure", &input).unwrap();
+        assert_eq!(
+            event,
+            AgentEvent::StopFailure {
+                agent: "claude".into(),
+                cwd: "/tmp".into(),
+                permission_mode: "default".into(),
+                error: "rate_limit".into(),
                 worktree: None,
                 agent_id: None,
             }

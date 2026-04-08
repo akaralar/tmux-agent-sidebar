@@ -84,6 +84,22 @@ pub enum AgentEvent {
         worktree: Option<WorktreeInfo>,
         agent_id: Option<String>,
     },
+    TaskCreated {
+        task_id: String,
+        task_subject: String,
+    },
+    TaskCompleted {
+        task_id: String,
+        task_subject: String,
+    },
+    TeammateIdle {
+        teammate_name: String,
+        team_name: String,
+    },
+    WorktreeCreate,
+    WorktreeRemove {
+        worktree_path: String,
+    },
 }
 
 /// Adapter that converts external agent events into internal `AgentEvent`.
@@ -344,6 +360,140 @@ mod tests {
         let adapter = resolve_adapter("codex").unwrap();
         assert!(adapter.parse("permission-denied", &json!({})).is_none());
         assert!(adapter.parse("cwd-changed", &json!({})).is_none());
+        assert!(adapter.parse("task-created", &json!({})).is_none());
+        assert!(adapter.parse("task-completed", &json!({})).is_none());
+        assert!(adapter.parse("teammate-idle", &json!({})).is_none());
+        assert!(adapter.parse("worktree-create", &json!({})).is_none());
+        assert!(adapter.parse("worktree-remove", &json!({})).is_none());
+    }
+
+    #[test]
+    fn claude_task_created_round_trip() {
+        let adapter = resolve_adapter("claude").unwrap();
+        let input = json!({"task_id": "7", "task_subject": "Deploy fix"});
+        let event = adapter.parse("task-created", &input).unwrap();
+        match event {
+            AgentEvent::TaskCreated {
+                task_id,
+                task_subject,
+            } => {
+                assert_eq!(task_id, "7");
+                assert_eq!(task_subject, "Deploy fix");
+            }
+            other => panic!("expected TaskCreated, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn claude_task_completed_round_trip() {
+        let adapter = resolve_adapter("claude").unwrap();
+        let input = json!({"task_id": "7", "task_subject": "Deploy fix"});
+        let event = adapter.parse("task-completed", &input).unwrap();
+        match event {
+            AgentEvent::TaskCompleted {
+                task_id,
+                task_subject,
+            } => {
+                assert_eq!(task_id, "7");
+                assert_eq!(task_subject, "Deploy fix");
+            }
+            other => panic!("expected TaskCompleted, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn claude_teammate_idle_round_trip() {
+        let adapter = resolve_adapter("claude").unwrap();
+        let input = json!({"teammate_name": "reviewer", "team_name": "dev"});
+        let event = adapter.parse("teammate-idle", &input).unwrap();
+        match event {
+            AgentEvent::TeammateIdle {
+                teammate_name,
+                team_name,
+            } => {
+                assert_eq!(teammate_name, "reviewer");
+                assert_eq!(team_name, "dev");
+            }
+            other => panic!("expected TeammateIdle, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn claude_worktree_create_round_trip() {
+        let adapter = resolve_adapter("claude").unwrap();
+        let event = adapter.parse("worktree-create", &json!({})).unwrap();
+        assert_eq!(event, AgentEvent::WorktreeCreate);
+    }
+
+    #[test]
+    fn claude_worktree_remove_round_trip() {
+        let adapter = resolve_adapter("claude").unwrap();
+        let input = json!({"worktree_path": "/tmp/wt-feat"});
+        let event = adapter.parse("worktree-remove", &input).unwrap();
+        match event {
+            AgentEvent::WorktreeRemove { worktree_path } => {
+                assert_eq!(worktree_path, "/tmp/wt-feat");
+            }
+            other => panic!("expected WorktreeRemove, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn codex_rejects_new_events_with_full_payloads() {
+        let adapter = resolve_adapter("codex").unwrap();
+        // Codex should ignore all new lifecycle events even with realistic payloads
+        assert!(
+            adapter
+                .parse(
+                    "task-created",
+                    &json!({"task_id": "1", "task_subject": "Deploy"})
+                )
+                .is_none()
+        );
+        assert!(
+            adapter
+                .parse(
+                    "task-completed",
+                    &json!({"task_id": "1", "task_subject": "Deploy"})
+                )
+                .is_none()
+        );
+        assert!(
+            adapter
+                .parse(
+                    "teammate-idle",
+                    &json!({"teammate_name": "reviewer", "team_name": "dev"})
+                )
+                .is_none()
+        );
+        assert!(
+            adapter
+                .parse("worktree-remove", &json!({"worktree_path": "/tmp/wt"}))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn claude_stop_failure_upstream_fields_round_trip() {
+        let adapter = resolve_adapter("claude").unwrap();
+        let input = json!({
+            "cwd": "/tmp",
+            "permission_mode": "auto",
+            "error_type": "billing_error",
+            "error_message": "Quota exceeded"
+        });
+        let event = adapter.parse("stop-failure", &input).unwrap();
+        match event {
+            AgentEvent::StopFailure {
+                error,
+                permission_mode,
+                ..
+            } => {
+                assert_eq!(error, "billing_error");
+                assert_eq!(permission_mode, "auto");
+            }
+            other => panic!("expected StopFailure, got {:?}", other),
+        }
     }
 
     #[test]

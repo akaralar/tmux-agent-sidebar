@@ -22,7 +22,7 @@ pub(crate) fn extract_tool_label(
             let fp = input_str("file_path");
             basename(&fp)
         }
-        "Bash" => input_str("command"),
+        "Bash" | "PowerShell" => input_str("command"),
         "Glob" | "Grep" => input_str("pattern"),
         "Agent" => input_str("description"),
         "WebFetch" => {
@@ -86,7 +86,7 @@ pub(crate) fn extract_tool_label(
             .to_string(),
         "CronCreate" => input_str("cron"),
         "CronDelete" => input_str("id"),
-        "EnterWorktree" => input_str("name"),
+        "EnterWorktree" | "ExitWorktree" => input_str("name"),
         _ => String::new(),
     }
 }
@@ -382,6 +382,40 @@ mod tests {
         assert_eq!(
             extract_tool_label("EnterWorktree", &input, &json!(null)),
             "feature-branch"
+        );
+    }
+
+    #[test]
+    fn label_powershell_extracts_command() {
+        let input = json!({"command": "Get-Process"});
+        assert_eq!(
+            extract_tool_label("PowerShell", &input, &json!(null)),
+            "Get-Process"
+        );
+    }
+
+    #[test]
+    fn label_exit_worktree() {
+        let input = json!({"name": "feature-branch"});
+        assert_eq!(
+            extract_tool_label("ExitWorktree", &input, &json!(null)),
+            "feature-branch"
+        );
+    }
+
+    #[test]
+    fn label_powershell_empty_command() {
+        assert_eq!(
+            extract_tool_label("PowerShell", &json!({}), &json!(null)),
+            ""
+        );
+    }
+
+    #[test]
+    fn label_exit_worktree_empty_name() {
+        assert_eq!(
+            extract_tool_label("ExitWorktree", &json!({}), &json!(null)),
+            ""
         );
     }
 

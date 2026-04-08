@@ -185,6 +185,31 @@ mod tests {
     }
 
     #[test]
+    fn task_created_not_supported() {
+        assert!(CodexAdapter.parse("task-created", &json!({})).is_none());
+    }
+
+    #[test]
+    fn task_completed_not_supported() {
+        assert!(CodexAdapter.parse("task-completed", &json!({})).is_none());
+    }
+
+    #[test]
+    fn teammate_idle_not_supported() {
+        assert!(CodexAdapter.parse("teammate-idle", &json!({})).is_none());
+    }
+
+    #[test]
+    fn worktree_create_not_supported() {
+        assert!(CodexAdapter.parse("worktree-create", &json!({})).is_none());
+    }
+
+    #[test]
+    fn worktree_remove_not_supported() {
+        assert!(CodexAdapter.parse("worktree-remove", &json!({})).is_none());
+    }
+
+    #[test]
     fn session_start_missing_fields_default_to_empty() {
         let adapter = CodexAdapter;
         let event = adapter.parse("session-start", &json!({})).unwrap();
