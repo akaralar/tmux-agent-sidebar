@@ -162,6 +162,32 @@ fn walking_right_2() -> Vec<Line<'static>> {
     ]
 }
 
+fn walking_right_3() -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▘", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▀", Style::new().fg(MASCOT_NOSE)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::styled("▘", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
+            Span::styled("▗", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
+            Span::raw(" "),
+        ]),
+    ]
+}
+
 fn walking_left_1() -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
@@ -205,6 +231,32 @@ fn walking_left_2() -> Vec<Line<'static>> {
         ]),
         Line::from(vec![
             Span::raw(" "),
+            Span::raw(" "),
+            Span::styled("▖", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
+            Span::styled("▗", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
+        ]),
+    ]
+}
+
+fn walking_left_3() -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▝", Style::new().fg(MASCOT_BODY)),
+            Span::raw(" "),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▀", Style::new().fg(MASCOT_NOSE)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("▄", Style::new().fg(MASCOT_BODY)),
+        ]),
+        Line::from(vec![
             Span::raw(" "),
             Span::styled("▖", Style::new().fg(MASCOT_BODY)),
             Span::raw(" "),
@@ -335,6 +387,25 @@ fn idle_sprite(motion: IdleMotion) -> Vec<Line<'static>> {
     }
 }
 
+fn walking_sprite_frame(state: &crate::state::AppState) -> usize {
+    match state.mascot_frame {
+        2 => 2,
+        3 => 3,
+        _ => 1,
+    }
+}
+
+fn walking_vertical_lift(state: &crate::state::AppState) -> u16 {
+    if matches!(state.mascot_state, MascotState::WalkRight | MascotState::WalkLeft)
+        && state.mascot_frame == 2
+        && state.mascot_walk_seed % 3 == 0
+    {
+        1
+    } else {
+        0
+    }
+}
+
 /// Draw mascot, desk, chair, and papers.
 /// `running_count` controls paper stack height.
 ///
@@ -352,20 +423,21 @@ fn idle_sprite(motion: IdleMotion) -> Vec<Line<'static>> {
 /// row above:    mascot head/hand
 pub fn draw_mascot(frame: &mut Frame, state: &AppState, bottom_area: Rect, running_count: usize) {
     let panel_width = bottom_area.width;
-    // Baseline: the bottom-most row for all elements
+    // Baseline: the bottom-most row for all elements.
     let baseline = bottom_area.y.saturating_sub(1);
 
     // --- Positions ---
-    let desk_x = bottom_area.x + panel_width.saturating_sub(DESK_OFFSET + DESK_WIDTH);
+    let desk_x = bottom_area.x + panel_width.saturating_sub(DESK_OFFSET + DESK_WIDTH + 1);
     let chair_x = desk_x.saturating_sub(CHAIR_WIDTH + CHAIR_DESK_GAP);
 
     // --- Draw mascot first (so desk/chair render on top if overlapping) ---
     let sprite_lines = match state.mascot_state {
         MascotState::Idle => idle_sprite(idle_motion(state)),
         MascotState::WalkRight => {
-            match state.mascot_frame {
+            match walking_sprite_frame(state) {
                 1 => walking_right_1(),
                 2 => walking_right_2(),
+                3 => walking_right_3(),
                 _ => walking_right_1(),
             }
         }
@@ -378,9 +450,10 @@ pub fn draw_mascot(frame: &mut Frame, state: &AppState, bottom_area: Rect, runni
             }
         }
         MascotState::WalkLeft => {
-            match state.mascot_frame {
+            match walking_sprite_frame(state) {
                 1 => walking_left_1(),
                 2 => walking_left_2(),
+                3 => walking_left_3(),
                 _ => walking_left_1(),
             }
         }
@@ -395,7 +468,10 @@ pub fn draw_mascot(frame: &mut Frame, state: &AppState, bottom_area: Rect, runni
         MascotState::Idle if matches!(idle_motion(state), IdleMotion::Jump) => {
             baseline.saturating_sub(sprite_height)
         }
-        _ => baseline.saturating_sub(sprite_height - 1),
+        MascotState::Idle => baseline.saturating_sub(sprite_height - 1),
+        MascotState::WalkRight | MascotState::WalkLeft => {
+            baseline.saturating_sub(sprite_height - 1 + walking_vertical_lift(state))
+        }
     };
     let mascot_x = bottom_area.x + state.mascot_x;
     render_lines(frame, &sprite_lines, mascot_x, mascot_y);
@@ -439,7 +515,7 @@ fn render_lines(frame: &mut Frame, lines: &[Line<'_>], x: u16, start_y: u16) {
             continue;
         }
         let line_width: u16 = line.spans.iter().map(|s| s.content.width() as u16).sum();
-        let available = frame.area().width.saturating_sub(x);
+        let available = frame.area().width.saturating_sub(x.saturating_add(1));
         if available == 0 {
             continue;
         }
@@ -569,8 +645,10 @@ mod tests {
         assert_eq!(sitting_sprite_wave().len(), 3);
         assert_eq!(walking_right_1().len(), 3);
         assert_eq!(walking_right_2().len(), 3);
+        assert_eq!(walking_right_3().len(), 3);
         assert_eq!(walking_left_1().len(), 3);
         assert_eq!(walking_left_2().len(), 3);
+        assert_eq!(walking_left_3().len(), 3);
         assert_eq!(working_sprite_1().len(), 3);
         assert_eq!(working_sprite_2().len(), 3);
         assert_eq!(working_sprite_3().len(), 3);
@@ -654,6 +732,9 @@ mod tests {
             }
             lines.push(line.trim_end().to_string());
         }
+        while lines.first().is_some_and(|l| l.is_empty()) {
+            lines.remove(0);
+        }
         // Remove trailing empty lines
         while lines.last().is_some_and(|l| l.is_empty()) {
             lines.pop();
@@ -666,10 +747,9 @@ mod tests {
         let state = AppState::new("%0".into());
         let output = render_mascot_scene(&state, 0, 40, 14);
         let expected = [
-            "",
             "  ▄ ▄",
-            " ▄▀▀▀▄                              ████",
-            "  ▀ ▀                            ██ █  █",
+            " ▄▀▀▀▄                             ████",
+            "  ▀ ▀                           ██ █  █",
         ].join("\n");
         assert_eq!(output, expected);
     }
@@ -686,10 +766,10 @@ mod tests {
         state.mascot_frame = 1;
         let output = render_mascot_scene(&state, 2, panel_width, 14);
         let expected = [
-            "                                 ▄▄  ▐█▌",
-            "                                 █▀╴ ▐█▌",
-            "                                 ▀▀ ████",
-            "                                 ██ █  █",
+            "                                 ▄▄ ▐█▌",
+            "                                 █▀╴▐█▌",
+            "                                 ▀▀████",
+            "                                ██ █  █",
         ].join("\n");
         assert_eq!(output, expected);
     }
@@ -706,10 +786,10 @@ mod tests {
         state.mascot_frame = 2;
         let output = render_mascot_scene(&state, 2, panel_width, 14);
         let expected = [
-            "                                 ▄▄  ▐█▌",
-            "                                 █▀─ ▐█▌",
-            "                                 ▀▀ ████",
-            "                                 ██ █  █",
+            "                                 ▄▄ ▐█▌",
+            "                                 █▀─▐█▌",
+            "                                 ▀▀████",
+            "                                ██ █  █",
         ].join("\n");
         assert_eq!(output, expected);
     }
@@ -726,10 +806,10 @@ mod tests {
         state.mascot_frame = 3;
         let output = render_mascot_scene(&state, 2, panel_width, 14);
         let expected = [
-            "                                 ▄▄  ▐█▌",
-            "                                 █▀╶ ▐█▌",
-            "                                 ▀▀ ████",
-            "                                 ██ █  █",
+            "                                 ▄▄ ▐█▌",
+            "                                 █▀╶▐█▌",
+            "                                 ▀▀████",
+            "                                ██ █  █",
         ].join("\n");
         assert_eq!(output, expected);
     }
@@ -742,10 +822,24 @@ mod tests {
         state.mascot_frame = 1;
         let output = render_mascot_scene(&state, 1, 40, 14);
         let expected = [
-            "",
-            "                ▄ ▄                  ▐█▌",
-            "               ▄▀▀▀▄                ████",
-            "               ▖ ▗               ██ █  █",
+            "                ▄ ▄                 ▐█▌",
+            "               ▄▀▀▀▄               ████",
+            "               ▖ ▗              ██ █  █",
+        ].join("\n");
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn snapshot_walking_right_frame3() {
+        let mut state = AppState::new("%0".into());
+        state.mascot_state = MascotState::WalkRight;
+        state.mascot_x = 15;
+        state.mascot_frame = 3;
+        let output = render_mascot_scene(&state, 1, 40, 14);
+        let expected = [
+            "                ▄▘ ▄                ▐█▌",
+            "               ▄▀▀▀▄               ████",
+            "               ▘ ▗              ██ █  █",
         ].join("\n");
         assert_eq!(output, expected);
     }
@@ -758,10 +852,24 @@ mod tests {
         state.mascot_frame = 1;
         let output = render_mascot_scene(&state, 0, 40, 14);
         let expected = [
-            "",
             "                ▄ ▄",
-            "               ▄▀▀▀▄                ████",
-            "                 ▗ ▖             ██ █  █",
+            "               ▄▀▀▀▄               ████",
+            "                 ▗ ▖            ██ █  █",
+        ].join("\n");
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn snapshot_walking_left_frame3() {
+        let mut state = AppState::new("%0".into());
+        state.mascot_state = MascotState::WalkLeft;
+        state.mascot_x = 15;
+        state.mascot_frame = 3;
+        let output = render_mascot_scene(&state, 0, 40, 14);
+        let expected = [
+            "                ▄▝ ▄",
+            "               ▄▀▀▀▄               ████",
+            "                ▖ ▗             ██ █  █",
         ].join("\n");
         assert_eq!(output, expected);
     }

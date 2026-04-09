@@ -284,6 +284,10 @@ pub struct AppState {
     pub mascot_x: u16,
     /// Mascot animation frame index (0 = sitting, 1-4 = running/working).
     pub mascot_frame: usize,
+    /// Walking animation tick used to pace the optional bounce.
+    pub mascot_walk_tick: usize,
+    /// Seed used to randomize walking bounce timing.
+    pub mascot_walk_seed: usize,
     pub mascot_bob_timer: usize,
     /// Idle animation schedule tick for jump motion within the bob cycle.
     pub mascot_idle_jump_tick: usize,
@@ -395,6 +399,8 @@ impl AppState {
             mascot_state: crate::ui::mascot::MascotState::Idle,
             mascot_x: crate::ui::mascot::MASCOT_HOME_X,
             mascot_frame: 0,
+            mascot_walk_tick: 0,
+            mascot_walk_seed: 1,
             mascot_bob_timer: 0,
             mascot_idle_jump_tick: 8,
             mascot_idle_blink_tick: 24,
@@ -750,8 +756,8 @@ impl AppState {
             .filter(|(p, _)| p.status == crate::tmux::PaneStatus::Running)
             .count();
 
-        // Mascot stops so working sprite (chair+feet = 4 chars) is adjacent to desk
-        let working_width = crate::ui::mascot::CHAIR_WIDTH + 2; // chair + mascot feet
+        // Mascot stops so the seated sprite leaves one column before the desk.
+        let working_width = crate::ui::mascot::CHAIR_WIDTH + 3;
         let stop_x = panel_width.saturating_sub(
             crate::ui::mascot::DESK_OFFSET + crate::ui::mascot::DESK_WIDTH + working_width,
         );
@@ -765,6 +771,8 @@ impl AppState {
                 if running_count > 0 {
                     self.mascot_state = crate::ui::mascot::MascotState::WalkRight;
                     self.mascot_frame = 0;
+                    self.mascot_walk_tick = 0;
+                    self.mascot_walk_seed = 1;
                     self.mascot_x = self.mascot_x.saturating_add(1);
                 } else {
                     self.mascot_bob_timer = (self.mascot_bob_timer + 1) % crate::ui::mascot::BOB_INTERVAL;
@@ -782,11 +790,18 @@ impl AppState {
                 let remaining = stop_x.saturating_sub(self.mascot_x);
                 let step = walk_step(remaining);
                 self.mascot_x = self.mascot_x.saturating_add(step);
+                self.mascot_walk_tick = self.mascot_walk_tick.saturating_add(1);
+                self.mascot_walk_seed = self
+                    .mascot_walk_seed
+                    .wrapping_mul(1664525)
+                    .wrapping_add(1013904223);
                 self.mascot_frame = if self.mascot_frame == 1 { 2 } else { 1 };
                 if self.mascot_x >= stop_x {
                     self.mascot_x = stop_x;
                     self.mascot_state = crate::ui::mascot::MascotState::Working;
                     self.mascot_frame = 0;
+                    self.mascot_walk_tick = 0;
+                    self.mascot_walk_seed = 1;
                     self.mascot_working_paper_timer = 0;
                     reseed_mascot_working_paper_motion(self);
                 }
@@ -809,6 +824,8 @@ impl AppState {
                 if running_count == 0 {
                     self.mascot_state = crate::ui::mascot::MascotState::WalkLeft;
                     self.mascot_frame = 0;
+                    self.mascot_walk_tick = 0;
+                    self.mascot_walk_seed = 1;
                     self.mascot_working_paper_timer = 0;
                     self.mascot_working_paper_next_lift_tick = 0;
                     self.mascot_working_paper_lift_until = 0;
@@ -825,11 +842,18 @@ impl AppState {
                 let remaining = self.mascot_x.saturating_sub(crate::ui::mascot::MASCOT_HOME_X);
                 let step = walk_step(remaining);
                 self.mascot_x = self.mascot_x.saturating_sub(step);
+                self.mascot_walk_tick = self.mascot_walk_tick.saturating_add(1);
+                self.mascot_walk_seed = self
+                    .mascot_walk_seed
+                    .wrapping_mul(1664525)
+                    .wrapping_add(1013904223);
                 self.mascot_frame = if self.mascot_frame == 1 { 2 } else { 1 };
                 if self.mascot_x <= crate::ui::mascot::MASCOT_HOME_X {
                     self.mascot_x = crate::ui::mascot::MASCOT_HOME_X;
                     self.mascot_state = crate::ui::mascot::MascotState::Idle;
                     self.mascot_frame = 0;
+                    self.mascot_walk_tick = 0;
+                    self.mascot_walk_seed = 1;
                     self.mascot_bob_timer = 0;
                     self.mascot_working_paper_timer = 0;
                     self.mascot_working_paper_next_lift_tick = 0;
