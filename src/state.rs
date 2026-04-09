@@ -49,7 +49,8 @@ impl StatusFilter {
             .iter()
             .position(|v| *v == self)
             .unwrap_or(0);
-        StatusFilter::VARIANTS[(idx + StatusFilter::VARIANTS.len() - 1) % StatusFilter::VARIANTS.len()]
+        StatusFilter::VARIANTS
+            [(idx + StatusFilter::VARIANTS.len() - 1) % StatusFilter::VARIANTS.len()]
     }
 
     pub fn as_str(self) -> &'static str {
@@ -178,7 +179,8 @@ impl GlobalState {
     /// Only updates `last_saved_filter` on success so that a failed write
     /// does not cause sync to overwrite the user's choice.
     pub fn save_filter(&mut self) {
-        if tmux::run_tmux(&["set", "-g", "@sidebar_filter", self.status_filter.as_str()]).is_some() {
+        if tmux::run_tmux(&["set", "-g", "@sidebar_filter", self.status_filter.as_str()]).is_some()
+        {
             self.last_saved_filter = self.status_filter;
         }
     }
@@ -277,12 +279,6 @@ pub struct AppState {
     pub repo_popup_selected: usize,
     pub repo_popup_area: Option<ratatui::layout::Rect>,
     pub repo_button_col: u16,
-    pub cat_state: crate::ui::cat::CatState,
-    /// Cat animation X position (character offset from left of bottom panel).
-    pub cat_x: u16,
-    /// Cat animation frame index (0 = sitting, 1-2 = running).
-    pub cat_frame: usize,
-    pub cat_bob_timer: usize,
     /// Update notice shown when a newer GitHub release is available.
     pub version_notice: Option<crate::version::UpdateNotice>,
     /// Shared state across sidebar instances, persisted to tmux global variables.
@@ -333,10 +329,6 @@ impl AppState {
             repo_popup_selected: 0,
             repo_popup_area: None,
             repo_button_col: u16::MAX,
-            cat_state: crate::ui::cat::CatState::Idle,
-            cat_x: crate::ui::cat::CAT_HOME_X,
-            cat_frame: 0,
-            cat_bob_timer: 0,
             version_notice: None,
             global: GlobalState::new(),
             hyperlink_overlays: vec![],
@@ -659,58 +651,6 @@ impl AppState {
 
     pub fn close_repo_popup(&mut self) {
         self.repo_popup_open = false;
-    }
-
-    /// Advance cat animation state. Called every spinner tick (200ms).
-    pub fn tick_cat(&mut self, panel_width: u16) {
-        let running_count = self
-            .repo_groups
-            .iter()
-            .flat_map(|g| &g.panes)
-            .filter(|(p, _)| p.status == crate::tmux::PaneStatus::Running)
-            .count();
-
-        let desk_x = panel_width.saturating_sub(
-            crate::ui::cat::DESK_OFFSET + crate::ui::cat::DESK_WIDTH + crate::ui::cat::CAT_WIDTH,
-        );
-
-        match self.cat_state {
-            crate::ui::cat::CatState::Idle => {
-                if running_count > 0 {
-                    self.cat_state = crate::ui::cat::CatState::WalkRight;
-                    self.cat_frame = 0;
-                    self.cat_x = self.cat_x.saturating_add(1);
-                } else {
-                    self.cat_bob_timer = (self.cat_bob_timer + 1) % crate::ui::cat::BOB_INTERVAL;
-                }
-            }
-            crate::ui::cat::CatState::WalkRight => {
-                self.cat_x = self.cat_x.saturating_add(1);
-                self.cat_frame = if self.cat_frame == 1 { 2 } else { 1 };
-                if self.cat_x >= desk_x {
-                    self.cat_x = desk_x;
-                    self.cat_state = crate::ui::cat::CatState::Working;
-                    self.cat_frame = 0;
-                }
-            }
-            crate::ui::cat::CatState::Working => {
-                self.cat_frame = if self.cat_frame == 1 { 2 } else { 1 };
-                if running_count == 0 {
-                    self.cat_state = crate::ui::cat::CatState::WalkLeft;
-                    self.cat_frame = 0;
-                }
-            }
-            crate::ui::cat::CatState::WalkLeft => {
-                self.cat_x = self.cat_x.saturating_sub(1);
-                self.cat_frame = if self.cat_frame == 1 { 2 } else { 1 };
-                if self.cat_x <= crate::ui::cat::CAT_HOME_X {
-                    self.cat_x = crate::ui::cat::CAT_HOME_X;
-                    self.cat_state = crate::ui::cat::CatState::Idle;
-                    self.cat_frame = 0;
-                    self.cat_bob_timer = 0;
-                }
-            }
-        }
     }
 }
 
@@ -2301,91 +2241,5 @@ mod tests {
         assert_eq!(all, 1);
         assert_eq!(running, 1);
         assert_eq!(idle, 0);
-    }
-
-    #[test]
-    fn cat_state_defaults() {
-        let state = AppState::new("%0".into());
-        assert!(matches!(state.cat_state, crate::ui::cat::CatState::Idle));
-        assert_eq!(state.cat_x, crate::ui::cat::CAT_HOME_X);
-        assert_eq!(state.cat_frame, 0);
-        assert_eq!(state.cat_bob_timer, 0);
-    }
-
-    #[test]
-    fn tick_cat_idle_to_walk_right_on_running() {
-        let mut state = AppState::new("%0".into());
-        let mut pane = test_pane("1");
-        pane.status = PaneStatus::Running;
-        state.repo_groups = vec![crate::group::RepoGroup {
-            name: "repo".into(),
-            has_focus: false,
-            panes: vec![(pane, PaneGitInfo::default())],
-        }];
-        state.tick_cat(60);
-        assert!(matches!(
-            state.cat_state,
-            crate::ui::cat::CatState::WalkRight
-        ));
-        assert!(state.cat_x > crate::ui::cat::CAT_HOME_X);
-    }
-
-    #[test]
-    fn tick_cat_walk_right_to_working_at_desk() {
-        let mut state = AppState::new("%0".into());
-        let mut pane = test_pane("1");
-        pane.status = PaneStatus::Running;
-        state.repo_groups = vec![crate::group::RepoGroup {
-            name: "repo".into(),
-            has_focus: false,
-            panes: vec![(pane, PaneGitInfo::default())],
-        }];
-        let panel_width = 60u16;
-        let desk_x = panel_width.saturating_sub(
-            crate::ui::cat::DESK_OFFSET + crate::ui::cat::DESK_WIDTH + crate::ui::cat::CAT_WIDTH,
-        );
-        state.cat_state = crate::ui::cat::CatState::WalkRight;
-        state.cat_x = desk_x - 1;
-        state.tick_cat(panel_width);
-        assert!(matches!(state.cat_state, crate::ui::cat::CatState::Working));
-    }
-
-    #[test]
-    fn tick_cat_working_to_walk_left_when_no_running() {
-        let mut state = AppState::new("%0".into());
-        let mut pane = test_pane("1");
-        pane.status = PaneStatus::Idle;
-        state.repo_groups = vec![crate::group::RepoGroup {
-            name: "repo".into(),
-            has_focus: false,
-            panes: vec![(pane, PaneGitInfo::default())],
-        }];
-        state.cat_state = crate::ui::cat::CatState::Working;
-        state.cat_x = 40;
-        state.tick_cat(60);
-        assert!(matches!(
-            state.cat_state,
-            crate::ui::cat::CatState::WalkLeft
-        ));
-    }
-
-    #[test]
-    fn tick_cat_walk_left_to_idle_at_home() {
-        let mut state = AppState::new("%0".into());
-        state.cat_state = crate::ui::cat::CatState::WalkLeft;
-        state.cat_x = crate::ui::cat::CAT_HOME_X + 1;
-        state.tick_cat(60);
-        assert_eq!(state.cat_x, crate::ui::cat::CAT_HOME_X);
-        state.tick_cat(60);
-        assert!(matches!(state.cat_state, crate::ui::cat::CatState::Idle));
-    }
-
-    #[test]
-    fn tick_cat_idle_bob() {
-        let mut state = AppState::new("%0".into());
-        for _ in 0..crate::ui::cat::BOB_INTERVAL {
-            state.tick_cat(60);
-        }
-        assert_eq!(state.cat_bob_timer, 0);
     }
 }

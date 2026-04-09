@@ -1,8 +1,7 @@
-pub mod panes;
 pub mod bottom;
-pub mod cat;
 pub mod colors;
 pub mod icons;
+pub mod panes;
 pub mod text;
 
 use ratatui::{
