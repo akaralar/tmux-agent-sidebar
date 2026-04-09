@@ -4,6 +4,7 @@ use std::time::Instant;
 use crate::activity::{ActivityEntry, TaskProgress};
 use crate::tmux::{self, SessionInfo};
 use crate::ui::colors::ColorTheme;
+use crate::ui::icons::StatusIcons;
 
 mod refresh;
 mod tab;
@@ -48,7 +49,8 @@ impl StatusFilter {
             .iter()
             .position(|v| *v == self)
             .unwrap_or(0);
-        StatusFilter::VARIANTS[(idx + StatusFilter::VARIANTS.len() - 1) % StatusFilter::VARIANTS.len()]
+        StatusFilter::VARIANTS
+            [(idx + StatusFilter::VARIANTS.len() - 1) % StatusFilter::VARIANTS.len()]
     }
 
     pub fn as_str(self) -> &'static str {
@@ -177,7 +179,8 @@ impl GlobalState {
     /// Only updates `last_saved_filter` on success so that a failed write
     /// does not cause sync to overwrite the user's choice.
     pub fn save_filter(&mut self) {
-        if tmux::run_tmux(&["set", "-g", "@sidebar_filter", self.status_filter.as_str()]).is_some() {
+        if tmux::run_tmux(&["set", "-g", "@sidebar_filter", self.status_filter.as_str()]).is_some()
+        {
             self.last_saved_filter = self.status_filter;
         }
     }
@@ -259,6 +262,7 @@ pub struct AppState {
     pub line_to_row: Vec<Option<usize>>,
     pub panes_scroll: ScrollState,
     pub theme: ColorTheme,
+    pub icons: StatusIcons,
     pub bottom_tab: BottomTab,
     pub git: crate::git::GitData,
     pub git_scroll: ScrollState,
@@ -375,6 +379,7 @@ impl AppState {
             line_to_row: vec![],
             panes_scroll: ScrollState::default(),
             theme: ColorTheme::default(),
+            icons: StatusIcons::default(),
             bottom_tab: BottomTab::Activity,
             git: crate::git::GitData::default(),
             git_scroll: ScrollState::default(),
@@ -2425,7 +2430,6 @@ mod tests {
         assert_eq!(running, 1);
         assert_eq!(idle, 0);
     }
-
     #[test]
     fn mascot_state_defaults() {
         let state = AppState::new("%0".into());

@@ -29,7 +29,7 @@ fn snapshot_selected_focused_styled() {
     let output = render_to_styled_string(&mut state, 28, 24);
     // Verify output contains selection background style with selection_bg color (236)
     assert!(
-        output.contains("bg:239"),
+        output.contains("bg:237"),
         "selected focused row should have selection background color"
     );
 }
@@ -119,8 +119,8 @@ fn selection_bg_does_not_bleed_into_border() {
 
     let output = render_to_styled_string(&mut state, 28, 24);
 
-    // Find content lines with selection bg (bg:239)
-    let selected_lines: Vec<&str> = output.lines().filter(|l| l.contains("bg:239")).collect();
+    // Find content lines with selection bg (bg:237)
+    let selected_lines: Vec<&str> = output.lines().filter(|l| l.contains("bg:237")).collect();
 
     assert!(
         !selected_lines.is_empty(),
@@ -128,21 +128,21 @@ fn selection_bg_does_not_bleed_into_border() {
     );
 
     for line in &selected_lines {
-        // Left border: "│" should NOT have bg:239
+        // Left border: "│" should NOT have bg:237
         // The line starts with │[fg:...] (border style, no bg),
-        // followed by a space with bg:239
+        // followed by a space with bg:237
         assert!(
-            !line.starts_with("│[fg:117,bg:239]"),
+            !line.starts_with("│[fg:117,bg:237]"),
             "left border │ should not have selection bg: {}",
             line
         );
 
-        // Right border: last │ should NOT have bg:239
+        // Right border: last │ should NOT have bg:237
         // Find the last │ in the line and check it doesn't have bg
         let last_border = line.rfind('│').expect("should have right border");
         let after_border = &line[last_border..];
         assert!(
-            !after_border.contains("bg:239"),
+            !after_border.contains("bg:237"),
             "right border │ should not have selection bg: {}",
             line
         );
@@ -170,13 +170,13 @@ fn selection_bg_covers_inner_padding() {
 
     let output = render_to_styled_string(&mut state, 28, 24);
 
-    let selected_lines: Vec<&str> = output.lines().filter(|l| l.contains("bg:239")).collect();
+    let selected_lines: Vec<&str> = output.lines().filter(|l| l.contains("bg:237")).collect();
 
     for line in &selected_lines {
-        // The space right after the left │ should have bg:239
-        // Pattern: │[fg:117] [bg:239]
+        // The space right after the left │ should have bg:237
+        // Pattern: │[fg:117] [bg:237]
         assert!(
-            line.contains(" [bg:239]"),
+            line.contains(" [bg:237]"),
             "inner space should have selection bg: {}",
             line
         );
@@ -203,7 +203,7 @@ fn no_selection_bg_when_not_selected() {
     let output = render_to_styled_string(&mut state, 28, 24);
 
     assert!(
-        !output.contains("bg:239"),
+        !output.contains("bg:237"),
         "should not have selection bg when sidebar is not focused"
     );
 }

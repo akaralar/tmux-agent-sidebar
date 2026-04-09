@@ -56,7 +56,7 @@ impl Default for ColorTheme {
             port: Color::Indexed(246),
             wait_reason: Color::Indexed(221),
             activity_border: Color::Indexed(39),
-            selection_bg: Color::Indexed(239),
+            selection_bg: Color::Indexed(237),
             branch: Color::Indexed(109),
             badge_danger: Color::Indexed(203),
             badge_auto: Color::Indexed(221),

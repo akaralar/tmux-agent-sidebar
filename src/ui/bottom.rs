@@ -180,18 +180,28 @@ fn render_git_header(state: &AppState, inner_w: usize) -> (Vec<Line<'static>>, O
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut pr_link_info: Option<PrLinkInfo> = None;
 
-    // Line 1: branch (left) + PR number (right)
+    // Line 1: branch (left) + ahead/behind + PR number (right)
     if !state.git.branch.is_empty() {
         let mut left_spans: Vec<Span> = Vec::new();
 
-        // Build branch text with ahead/behind
-        let mut branch_text = format!(" {}", state.git.branch);
+        // Build branch text
+        let branch_text = format!(" {}", state.git.branch);
+        let mut movement_spans: Vec<Span> = Vec::new();
         if let Some((ahead, behind)) = state.git.ahead_behind {
             if ahead > 0 {
-                branch_text.push_str(&format!(" ↑{ahead}"));
+                movement_spans.push(Span::raw(" "));
+                movement_spans.push(Span::styled("↑", Style::default().fg(theme.diff_added)));
+                movement_spans.push(Span::styled(
+                    ahead.to_string(),
+                    Style::default().fg(theme.text_active),
+                ));
             }
             if behind > 0 {
-                branch_text.push_str(&format!(" ↓{behind}"));
+                movement_spans.push(Span::styled("↓", Style::default().fg(theme.diff_deleted)));
+                movement_spans.push(Span::styled(
+                    behind.to_string(),
+                    Style::default().fg(theme.text_active),
+                ));
             }
         }
 
@@ -200,9 +210,16 @@ fn render_git_header(state: &AppState, inner_w: usize) -> (Vec<Line<'static>>, O
 
         // Reserve space: PR text + 1 trailing space for right margin
         let pr_w = pr_text.as_ref().map_or(0, |t| display_width(t) + 1);
+        let movement_w = movement_spans
+            .iter()
+            .map(|span| display_width(span.content.as_ref()))
+            .sum::<usize>();
+        let separator_w = if movement_w > 0 && pr_w > 0 { 1 } else { 0 };
+        let tail_w = if pr_text.is_some() { 0 } else { 1 };
+        let right_w = movement_w + separator_w + pr_w + tail_w;
 
         // Truncate branch if it collides with PR number
-        let max_branch_w = inner_w.saturating_sub(pr_w + if pr_w > 0 { 1 } else { 0 });
+        let max_branch_w = inner_w.saturating_sub(right_w + if right_w > 0 { 1 } else { 0 });
         let truncated_branch = truncate_to_width(&branch_text, max_branch_w);
         let branch_w = display_width(&truncated_branch);
 
@@ -212,9 +229,13 @@ fn render_git_header(state: &AppState, inner_w: usize) -> (Vec<Line<'static>>, O
         ));
 
         if let Some(ref pr) = pr_text {
-            let gap = pad_to(branch_w + pr_w, inner_w);
+            let gap = pad_to(branch_w + right_w, inner_w);
             let pr_x_offset = (inner_w - pr_w) as u16;
             left_spans.push(Span::raw(gap));
+            left_spans.extend(movement_spans);
+            if movement_w > 0 {
+                left_spans.push(Span::raw(" "));
+            }
             left_spans.push(Span::styled(
                 pr.clone(),
                 Style::default()
@@ -233,6 +254,15 @@ fn render_git_header(state: &AppState, inner_w: usize) -> (Vec<Line<'static>>, O
                     });
                 }
             }
+        } else if !movement_spans.is_empty() {
+            let gap = pad_to(branch_w + right_w, inner_w);
+            left_spans.push(Span::raw(gap));
+            left_spans.extend(movement_spans);
+            left_spans.push(Span::raw(" "));
+        } else {
+            let gap = pad_to(branch_w + right_w, inner_w);
+            left_spans.push(Span::raw(gap));
+            left_spans.push(Span::raw(" "));
         }
 
         lines.push(Line::from(left_spans));
@@ -511,6 +541,15 @@ fn line_text(line: &Line<'_>) -> String {
 }
 
 #[cfg(test)]
+fn line_visual(line: &Line<'_>) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref().replace(' ', "·"))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -590,6 +629,67 @@ mod tests {
         // PR text "#7" is 2 chars wide + 1 trailing space = 3, so x_offset = 30 - 3 = 27
         let pr_display_w = display_width(&info.text) + 1; // +1 for trailing space
         assert_eq!(info.x_offset as usize, width - pr_display_w);
+    }
+
+    #[test]
+    fn header_with_pr_number_inline_snapshot() {
+        let mut state = crate::state::AppState::new(String::new());
+        state.git.branch = "main".into();
+        state.git.ahead_behind = Some((2, 1));
+        state.git.pr_number = Some("7".into());
+
+        let (lines, _) = render_git_header(&state, 40);
+        insta::assert_snapshot!(line_visual(&lines[0]), @"·main···························↑2↓1·#7·");
+    }
+
+    #[test]
+    fn header_without_pr_number_inline_snapshot() {
+        let mut state = crate::state::AppState::new(String::new());
+        state.git.branch = "main".into();
+        state.git.ahead_behind = Some((2, 1));
+
+        let (lines, _) = render_git_header(&state, 40);
+        insta::assert_snapshot!(line_visual(&lines[0]), @"·main······························↑2↓1·");
+    }
+
+    #[test]
+    fn header_ahead_behind_has_no_internal_space() {
+        let mut state = crate::state::AppState::new(String::new());
+        state.git.branch = "main".into();
+        state.git.ahead_behind = Some((2, 1));
+        state.git.pr_number = Some("7".into());
+
+        let (lines, _) = render_git_header(&state, 40);
+        let spans = &lines[0].spans;
+        let two_pos = spans
+            .iter()
+            .position(|span| span.content.as_ref() == "2")
+            .expect("ahead count should be rendered");
+        let down_pos = spans
+            .iter()
+            .position(|span| span.content.as_ref() == "↓")
+            .expect("behind arrow should be rendered");
+        assert!(
+            two_pos < down_pos,
+            "ahead count should appear before behind arrow"
+        );
+        assert!(
+            !spans[two_pos + 1..down_pos]
+                .iter()
+                .any(|span| span.content.as_ref() == " "),
+            "movement group should not contain an internal separator"
+        );
+    }
+
+    #[test]
+    fn header_with_long_branch_inline_snapshot() {
+        let mut state = crate::state::AppState::new(String::new());
+        state.git.branch = "feature/sidebar/really-long-branch-name-that-should-truncate".into();
+        state.git.ahead_behind = Some((2, 1));
+        state.git.pr_number = Some("7".into());
+
+        let (lines, _) = render_git_header(&state, 32);
+        insta::assert_snapshot!(line_visual(&lines[0]), @"·feature/sidebar/real…··↑2↓1·#7·");
     }
 
     // ─── Section title color tests ───────────────────────────────

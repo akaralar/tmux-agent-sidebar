@@ -17,7 +17,7 @@ fn test_all_color_theme_defaults() {
     // Core UI colors
     assert_eq!(theme.border_active, Color::Indexed(117));
     assert_eq!(theme.border_inactive, Color::Indexed(240));
-    assert_eq!(theme.selection_bg, Color::Indexed(239));
+    assert_eq!(theme.selection_bg, Color::Indexed(237));
 
     // Status colors
     assert_eq!(theme.status_running, Color::Indexed(114));
@@ -630,10 +630,10 @@ fn test_selection_bg_color_applied() {
     state.global.selected_pane_row = 0;
 
     let styled = render_to_styled_string(&mut state, 28, 24);
-    // selection_bg is 239
+    // selection_bg is 237
     assert!(
-        styled.contains("bg:239"),
-        "Selected row should use selection_bg color (239)"
+        styled.contains("bg:237"),
+        "Selected row should use selection_bg color (237)"
     );
 }
 
