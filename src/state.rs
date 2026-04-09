@@ -2505,7 +2505,7 @@ mod tests {
             panes: vec![(pane, PaneGitInfo::default())],
         }];
         let panel_width = 60u16;
-        let working_width = crate::ui::mascot::CHAIR_WIDTH + 2;
+        let working_width = crate::ui::mascot::CHAIR_WIDTH + 3;
         let stop_x = panel_width.saturating_sub(
             crate::ui::mascot::DESK_OFFSET + crate::ui::mascot::DESK_WIDTH + working_width,
         );
