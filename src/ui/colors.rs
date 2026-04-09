@@ -15,6 +15,8 @@ pub struct ColorTheme {
     pub status_unknown: Color,
     pub agent_claude: Color,
     pub agent_codex: Color,
+    pub mascot_body: Color,
+    pub mascot_eye: Color,
     pub text_active: Color,
     pub text_muted: Color,
     pub session_header: Color,
@@ -50,6 +52,8 @@ impl Default for ColorTheme {
             status_unknown: Color::Indexed(244),
             agent_claude: Color::Indexed(174),
             agent_codex: Color::Indexed(141),
+            mascot_body: Color::Indexed(208),
+            mascot_eye: Color::Indexed(114),
             text_active: Color::Indexed(255),
             text_muted: Color::Indexed(244),
             session_header: Color::Indexed(39),
@@ -99,6 +103,8 @@ impl ColorTheme {
         theme.status_error = read("@sidebar_color_error", theme.status_error);
         theme.agent_claude = read("@sidebar_color_agent_claude", theme.agent_claude);
         theme.agent_codex = read("@sidebar_color_agent_codex", theme.agent_codex);
+        theme.mascot_body = read("@sidebar_color_mascot_body", theme.mascot_body);
+        theme.mascot_eye = read("@sidebar_color_mascot_eye", theme.mascot_eye);
         theme.text_active = read("@sidebar_color_text_active", theme.text_active);
         theme.text_muted = read("@sidebar_color_text_muted", theme.text_muted);
         theme.session_header = read("@sidebar_color_session", theme.session_header);
@@ -186,5 +192,12 @@ mod tests {
         assert_eq!(theme.agent_color(&AgentType::Claude), Color::Indexed(174));
         assert_eq!(theme.agent_color(&AgentType::Codex), Color::Indexed(141));
         assert_eq!(theme.agent_color(&AgentType::Unknown), theme.status_unknown);
+    }
+
+    #[test]
+    fn mascot_color_defaults_match_current_palette() {
+        let theme = ColorTheme::default();
+        assert_eq!(theme.mascot_body, Color::Indexed(208));
+        assert_eq!(theme.mascot_eye, Color::Indexed(114));
     }
 }

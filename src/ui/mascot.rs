@@ -324,6 +324,63 @@ fn working_sprite_3() -> Vec<Line<'static>> {
     ]
 }
 
+fn working_sprite_lifted_1() -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("▄▄", Style::new().fg(MASCOT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("█", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("╷", Style::new().fg(MASCOT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("▀▀", Style::new().fg(MASCOT_BODY).bg(CHAIR_COLOR)),
+        ]),
+    ]
+}
+
+fn working_sprite_lifted_2() -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("▄▄", Style::new().fg(MASCOT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("█", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("─", Style::new().fg(MASCOT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("▀▀", Style::new().fg(MASCOT_BODY).bg(CHAIR_COLOR)),
+        ]),
+    ]
+}
+
+fn working_sprite_lifted_3() -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("▄▄", Style::new().fg(MASCOT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("█", Style::new().fg(MASCOT_BODY)),
+            Span::styled("▀", Style::new().fg(MASCOT_EYE)),
+            Span::styled("╶", Style::new().fg(MASCOT_BODY)),
+        ]),
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("▀▀", Style::new().fg(MASCOT_BODY).bg(CHAIR_COLOR)),
+        ]),
+    ]
+}
+
 const DESK_COLOR: Color = Color::Indexed(137); // brown
 const CHAIR_COLOR: Color = Color::Indexed(94); // dark brown
 
@@ -379,6 +436,61 @@ fn working_paper_lift(state: &AppState) -> u16 {
     }
 }
 
+fn working_sprite(state: &AppState) -> Vec<Line<'static>> {
+    let lifted = working_paper_lift(state) == 1;
+    match state.mascot_frame {
+        1 => {
+            if lifted {
+                working_sprite_lifted_1()
+            } else {
+                working_sprite_1()
+            }
+        }
+        2 => {
+            if lifted {
+                working_sprite_lifted_2()
+            } else {
+                working_sprite_2()
+            }
+        }
+        3 => {
+            if lifted {
+                working_sprite_lifted_3()
+            } else {
+                working_sprite_3()
+            }
+        }
+        _ => {
+            if lifted {
+                working_sprite_lifted_1()
+            } else {
+                working_sprite_1()
+            }
+        }
+    }
+}
+
+fn recolor_sprite(lines: Vec<Line<'static>>, body: Color, eye: Color) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .map(|line| {
+            let spans = line
+                .spans
+                .into_iter()
+                .map(|mut span| {
+                    if span.style.fg == Some(MASCOT_BODY) {
+                        span.style = span.style.fg(body);
+                    } else if span.style.fg == Some(MASCOT_EYE) {
+                        span.style = span.style.fg(eye);
+                    }
+                    span
+                })
+                .collect::<Vec<_>>();
+            Line::from(spans)
+        })
+        .collect()
+}
+
 fn idle_sprite(motion: IdleMotion) -> Vec<Line<'static>> {
     match motion {
         IdleMotion::Wave => sitting_sprite_wave(),
@@ -396,11 +508,10 @@ fn walking_sprite_frame(state: &crate::state::AppState) -> usize {
 }
 
 fn walking_vertical_lift(state: &crate::state::AppState) -> u16 {
-    if matches!(state.mascot_state, MascotState::WalkRight | MascotState::WalkLeft)
-        && state.mascot_frame == 2
-        && state.mascot_walk_seed % 3 == 0
-    {
-        1
+    let is_walking = matches!(state.mascot_state, MascotState::WalkRight | MascotState::WalkLeft);
+    let phase = (state.mascot_walk_tick + (state.mascot_walk_seed % 6)) % 6;
+    if is_walking && state.mascot_walk_tick >= 4 && phase < 2 {
+        2
     } else {
         0
     }
@@ -441,14 +552,7 @@ pub fn draw_mascot(frame: &mut Frame, state: &AppState, bottom_area: Rect, runni
                 _ => walking_right_1(),
             }
         }
-        MascotState::Working => {
-            match state.mascot_frame {
-                1 => working_sprite_1(),
-                2 => working_sprite_2(),
-                3 => working_sprite_3(),
-                _ => working_sprite_1(),
-            }
-        }
+        MascotState::Working => working_sprite(state),
         MascotState::WalkLeft => {
             match walking_sprite_frame(state) {
                 1 => walking_left_1(),
@@ -458,6 +562,11 @@ pub fn draw_mascot(frame: &mut Frame, state: &AppState, bottom_area: Rect, runni
             }
         }
     };
+    let sprite_lines = recolor_sprite(
+        sprite_lines,
+        state.theme.mascot_body,
+        state.theme.mascot_eye,
+    );
 
     let sprite_height = sprite_lines.len() as u16;
     let mascot_y = match state.mascot_state {
@@ -605,6 +714,36 @@ mod tests {
     }
 
     #[test]
+    fn sprite_working_lifted_frame1() {
+        let s = sprite_to_string(&working_sprite_lifted_1());
+        assert_eq!(s, [
+            " ▄▄",
+            " █▀╷",
+            " ▀▀",
+        ].join("\n"));
+    }
+
+    #[test]
+    fn sprite_working_lifted_frame2() {
+        let s = sprite_to_string(&working_sprite_lifted_2());
+        assert_eq!(s, [
+            " ▄▄",
+            " █▀─",
+            " ▀▀",
+        ].join("\n"));
+    }
+
+    #[test]
+    fn sprite_working_lifted_frame3() {
+        let s = sprite_to_string(&working_sprite_lifted_3());
+        assert_eq!(s, [
+            " ▄▄",
+            " █▀╶",
+            " ▀▀",
+        ].join("\n"));
+    }
+
+    #[test]
     fn sprite_desk() {
         let s = sprite_to_string(&desk_sprite());
         assert_eq!(s, [
@@ -652,6 +791,9 @@ mod tests {
         assert_eq!(working_sprite_1().len(), 3);
         assert_eq!(working_sprite_2().len(), 3);
         assert_eq!(working_sprite_3().len(), 3);
+        assert_eq!(working_sprite_lifted_1().len(), 3);
+        assert_eq!(working_sprite_lifted_2().len(), 3);
+        assert_eq!(working_sprite_lifted_3().len(), 3);
     }
 
     #[test]
@@ -709,6 +851,33 @@ mod tests {
         } else {
             assert_eq!(state.mascot_idle_wave_tick, 0);
         }
+    }
+
+    #[test]
+    fn walking_vertical_lift_triggers_on_matching_phase() {
+        let mut state = AppState::new("%0".into());
+        state.mascot_state = MascotState::WalkRight;
+        state.mascot_walk_tick = 4;
+        state.mascot_walk_seed = 2;
+        assert_eq!(walking_vertical_lift(&state), 2);
+    }
+
+    #[test]
+    fn walking_vertical_lift_skips_other_phases() {
+        let mut state = AppState::new("%0".into());
+        state.mascot_state = MascotState::WalkRight;
+        state.mascot_walk_tick = 3;
+        state.mascot_walk_seed = 0;
+        assert_eq!(walking_vertical_lift(&state), 0);
+    }
+
+    #[test]
+    fn walking_vertical_lift_skips_startup_ticks() {
+        let mut state = AppState::new("%0".into());
+        state.mascot_state = MascotState::WalkRight;
+        state.mascot_walk_tick = 1;
+        state.mascot_walk_seed = 0;
+        assert_eq!(walking_vertical_lift(&state), 0);
     }
 
     /// Helper: render draw_mascot into a buffer and return as string for visual inspection.
@@ -820,6 +989,8 @@ mod tests {
         state.mascot_state = MascotState::WalkRight;
         state.mascot_x = 15;
         state.mascot_frame = 1;
+        state.mascot_walk_tick = 2;
+        state.mascot_walk_seed = 1;
         let output = render_mascot_scene(&state, 1, 40, 14);
         let expected = [
             "                ▄ ▄                 ▐█▌",
@@ -835,6 +1006,8 @@ mod tests {
         state.mascot_state = MascotState::WalkRight;
         state.mascot_x = 15;
         state.mascot_frame = 3;
+        state.mascot_walk_tick = 2;
+        state.mascot_walk_seed = 1;
         let output = render_mascot_scene(&state, 1, 40, 14);
         let expected = [
             "                ▄▘ ▄                ▐█▌",
@@ -850,6 +1023,8 @@ mod tests {
         state.mascot_state = MascotState::WalkLeft;
         state.mascot_x = 15;
         state.mascot_frame = 1;
+        state.mascot_walk_tick = 2;
+        state.mascot_walk_seed = 1;
         let output = render_mascot_scene(&state, 0, 40, 14);
         let expected = [
             "                ▄ ▄",
@@ -865,6 +1040,8 @@ mod tests {
         state.mascot_state = MascotState::WalkLeft;
         state.mascot_x = 15;
         state.mascot_frame = 3;
+        state.mascot_walk_tick = 2;
+        state.mascot_walk_seed = 1;
         let output = render_mascot_scene(&state, 0, 40, 14);
         let expected = [
             "                ▄▝ ▄",

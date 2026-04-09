@@ -284,10 +284,16 @@ pub struct AppState {
     pub mascot_x: u16,
     /// Mascot animation frame index (0 = sitting, 1-4 = running/working).
     pub mascot_frame: usize,
+    /// Working animation tick used to slow the hand motion down a bit.
+    pub mascot_working_frame_tick: usize,
     /// Walking animation tick used to pace the optional bounce.
     pub mascot_walk_tick: usize,
     /// Seed used to randomize walking bounce timing.
     pub mascot_walk_seed: usize,
+    /// Tick at which the next walk bounce should start.
+    pub mascot_walk_bounce_next_tick: usize,
+    /// Tick until which the current walk bounce stays lifted.
+    pub mascot_walk_bounce_lift_until: usize,
     pub mascot_bob_timer: usize,
     /// Idle animation schedule tick for jump motion within the bob cycle.
     pub mascot_idle_jump_tick: usize,
@@ -365,6 +371,17 @@ fn reseed_mascot_working_paper_motion(state: &mut AppState) {
     state.mascot_working_paper_next_lift_tick = state.mascot_working_paper_timer + delay;
 }
 
+fn reseed_mascot_walk_bounce(state: &mut AppState) {
+    const A: usize = 1664525;
+    const C: usize = 1013904223;
+    state.mascot_walk_seed = state
+        .mascot_walk_seed
+        .wrapping_mul(A)
+        .wrapping_add(C);
+    let delay = 3 + (state.mascot_walk_seed % 5);
+    state.mascot_walk_bounce_next_tick = state.mascot_walk_tick + delay;
+}
+
 impl AppState {
     pub fn new(tmux_pane: String) -> Self {
         let mut state = Self {
@@ -399,8 +416,11 @@ impl AppState {
             mascot_state: crate::ui::mascot::MascotState::Idle,
             mascot_x: crate::ui::mascot::MASCOT_HOME_X,
             mascot_frame: 0,
+            mascot_working_frame_tick: 0,
             mascot_walk_tick: 0,
             mascot_walk_seed: 1,
+            mascot_walk_bounce_next_tick: 0,
+            mascot_walk_bounce_lift_until: 0,
             mascot_bob_timer: 0,
             mascot_idle_jump_tick: 8,
             mascot_idle_blink_tick: 24,
@@ -771,8 +791,11 @@ impl AppState {
                 if running_count > 0 {
                     self.mascot_state = crate::ui::mascot::MascotState::WalkRight;
                     self.mascot_frame = 0;
+                    self.mascot_working_frame_tick = 0;
                     self.mascot_walk_tick = 0;
                     self.mascot_walk_seed = 1;
+                    self.mascot_walk_bounce_next_tick = 0;
+                    self.mascot_walk_bounce_lift_until = 0;
                     self.mascot_x = self.mascot_x.saturating_add(1);
                 } else {
                     self.mascot_bob_timer = (self.mascot_bob_timer + 1) % crate::ui::mascot::BOB_INTERVAL;
@@ -785,23 +808,32 @@ impl AppState {
                 if running_count == 0 {
                     self.mascot_state = crate::ui::mascot::MascotState::WalkLeft;
                     self.mascot_frame = 0;
+                    self.mascot_working_frame_tick = 0;
+                    self.mascot_walk_bounce_next_tick = 0;
+                    self.mascot_walk_bounce_lift_until = 0;
                     return;
                 }
                 let remaining = stop_x.saturating_sub(self.mascot_x);
                 let step = walk_step(remaining);
                 self.mascot_x = self.mascot_x.saturating_add(step);
                 self.mascot_walk_tick = self.mascot_walk_tick.saturating_add(1);
-                self.mascot_walk_seed = self
-                    .mascot_walk_seed
-                    .wrapping_mul(1664525)
-                    .wrapping_add(1013904223);
+                if self.mascot_walk_bounce_next_tick == 0 {
+                    reseed_mascot_walk_bounce(self);
+                }
+                if self.mascot_walk_tick >= self.mascot_walk_bounce_next_tick {
+                    self.mascot_walk_bounce_lift_until = self.mascot_walk_tick + 2;
+                    reseed_mascot_walk_bounce(self);
+                }
                 self.mascot_frame = if self.mascot_frame == 1 { 2 } else { 1 };
                 if self.mascot_x >= stop_x {
                     self.mascot_x = stop_x;
                     self.mascot_state = crate::ui::mascot::MascotState::Working;
                     self.mascot_frame = 0;
+                    self.mascot_working_frame_tick = 0;
                     self.mascot_walk_tick = 0;
                     self.mascot_walk_seed = 1;
+                    self.mascot_walk_bounce_next_tick = 0;
+                    self.mascot_walk_bounce_lift_until = 0;
                     self.mascot_working_paper_timer = 0;
                     reseed_mascot_working_paper_motion(self);
                 }
@@ -816,16 +848,22 @@ impl AppState {
                     self.mascot_working_paper_x_offset = (self.mascot_working_paper_seed & 1) as u16;
                     reseed_mascot_working_paper_motion(self);
                 }
-                self.mascot_frame = match self.mascot_frame {
-                    1 => 2,
-                    2 => 3,
-                    _ => 1,
-                };
+                self.mascot_working_frame_tick = self.mascot_working_frame_tick.saturating_add(1);
+                if self.mascot_working_frame_tick % 2 == 0 {
+                    self.mascot_frame = match self.mascot_frame {
+                        1 => 2,
+                        2 => 3,
+                        _ => 1,
+                    };
+                }
                 if running_count == 0 {
                     self.mascot_state = crate::ui::mascot::MascotState::WalkLeft;
                     self.mascot_frame = 0;
+                    self.mascot_working_frame_tick = 0;
                     self.mascot_walk_tick = 0;
                     self.mascot_walk_seed = 1;
+                    self.mascot_walk_bounce_next_tick = 0;
+                    self.mascot_walk_bounce_lift_until = 0;
                     self.mascot_working_paper_timer = 0;
                     self.mascot_working_paper_next_lift_tick = 0;
                     self.mascot_working_paper_lift_until = 0;
@@ -837,23 +875,32 @@ impl AppState {
                 if running_count > 0 {
                     self.mascot_state = crate::ui::mascot::MascotState::WalkRight;
                     self.mascot_frame = 0;
+                    self.mascot_working_frame_tick = 0;
+                    self.mascot_walk_bounce_next_tick = 0;
+                    self.mascot_walk_bounce_lift_until = 0;
                     return;
                 }
                 let remaining = self.mascot_x.saturating_sub(crate::ui::mascot::MASCOT_HOME_X);
                 let step = walk_step(remaining);
                 self.mascot_x = self.mascot_x.saturating_sub(step);
                 self.mascot_walk_tick = self.mascot_walk_tick.saturating_add(1);
-                self.mascot_walk_seed = self
-                    .mascot_walk_seed
-                    .wrapping_mul(1664525)
-                    .wrapping_add(1013904223);
+                if self.mascot_walk_bounce_next_tick == 0 {
+                    reseed_mascot_walk_bounce(self);
+                }
+                if self.mascot_walk_tick >= self.mascot_walk_bounce_next_tick {
+                    self.mascot_walk_bounce_lift_until = self.mascot_walk_tick + 2;
+                    reseed_mascot_walk_bounce(self);
+                }
                 self.mascot_frame = if self.mascot_frame == 1 { 2 } else { 1 };
                 if self.mascot_x <= crate::ui::mascot::MASCOT_HOME_X {
                     self.mascot_x = crate::ui::mascot::MASCOT_HOME_X;
                     self.mascot_state = crate::ui::mascot::MascotState::Idle;
                     self.mascot_frame = 0;
+                    self.mascot_working_frame_tick = 0;
                     self.mascot_walk_tick = 0;
                     self.mascot_walk_seed = 1;
+                    self.mascot_walk_bounce_next_tick = 0;
+                    self.mascot_walk_bounce_lift_until = 0;
                     self.mascot_bob_timer = 0;
                     self.mascot_working_paper_timer = 0;
                     self.mascot_working_paper_next_lift_tick = 0;
@@ -2460,7 +2507,10 @@ mod tests {
         assert!(matches!(state.mascot_state, crate::ui::mascot::MascotState::Idle));
         assert_eq!(state.mascot_x, crate::ui::mascot::MASCOT_HOME_X);
         assert_eq!(state.mascot_frame, 0);
+        assert_eq!(state.mascot_working_frame_tick, 0);
         assert_eq!(state.mascot_bob_timer, 0);
+        assert_eq!(state.mascot_walk_bounce_next_tick, 0);
+        assert_eq!(state.mascot_walk_bounce_lift_until, 0);
         assert_eq!(state.mascot_working_paper_timer, 0);
         assert_eq!(state.mascot_working_paper_next_lift_tick, 0);
         assert_eq!(state.mascot_working_paper_lift_until, 0);
@@ -2516,6 +2566,25 @@ mod tests {
     }
 
     #[test]
+    fn tick_mascot_walk_right_schedules_bounce() {
+        let mut state = AppState::new("%0".into());
+        let mut pane = test_pane("1");
+        pane.status = PaneStatus::Running;
+        state.repo_groups = vec![crate::group::RepoGroup {
+            name: "repo".into(),
+            has_focus: false,
+            panes: vec![(pane, PaneGitInfo::default())],
+        }];
+        state.mascot_state = crate::ui::mascot::MascotState::WalkRight;
+        state.mascot_x = 20;
+
+        state.tick_mascot(60);
+
+        assert!(state.mascot_walk_bounce_next_tick > 0);
+        assert!(state.mascot_walk_bounce_next_tick > state.mascot_walk_tick);
+    }
+
+    #[test]
     fn tick_mascot_walk_right_returns_to_walk_left_when_running_stops() {
         let mut state = AppState::new("%0".into());
         let mut pane = test_pane("1");
@@ -2555,6 +2624,27 @@ mod tests {
             state.mascot_state,
             crate::ui::mascot::MascotState::WalkLeft
         ));
+    }
+
+    #[test]
+    fn tick_mascot_working_holds_hand_frame_for_two_ticks() {
+        let mut state = AppState::new("%0".into());
+        let mut pane = test_pane("1");
+        pane.status = PaneStatus::Running;
+        state.repo_groups = vec![crate::group::RepoGroup {
+            name: "repo".into(),
+            has_focus: false,
+            panes: vec![(pane, PaneGitInfo::default())],
+        }];
+        state.mascot_state = crate::ui::mascot::MascotState::Working;
+        state.mascot_x = 40;
+        state.mascot_frame = 1;
+
+        state.tick_mascot(60);
+        assert_eq!(state.mascot_frame, 1);
+
+        state.tick_mascot(60);
+        assert_eq!(state.mascot_frame, 2);
     }
 
     #[test]
