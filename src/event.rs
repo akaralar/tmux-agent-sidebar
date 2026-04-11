@@ -446,19 +446,26 @@ mod tests {
     }
 
     #[test]
-    fn both_adapters_handle_session_lifecycle() {
+    fn both_adapters_handle_session_start() {
         for agent_name in &["claude", "codex"] {
             let adapter = resolve_adapter(agent_name).unwrap();
             assert!(
                 adapter.parse("session-start", &json!({})).is_some(),
                 "{agent_name} should handle session-start"
             );
-            assert_eq!(
-                adapter.parse("session-end", &json!({})),
-                Some(AgentEvent::SessionEnd),
-                "{agent_name} should handle session-end"
-            );
         }
+        // Codex does not fire SessionEnd, so only Claude handles it.
+        let claude = resolve_adapter("claude").unwrap();
+        assert_eq!(
+            claude.parse("session-end", &json!({})),
+            Some(AgentEvent::SessionEnd),
+        );
+        assert!(
+            resolve_adapter("codex")
+                .unwrap()
+                .parse("session-end", &json!({}))
+                .is_none()
+        );
     }
 
     #[test]

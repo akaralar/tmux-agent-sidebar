@@ -14,9 +14,6 @@ impl CodexAdapter {
     /// `UserPromptSubmit`, `Stop`.
     ///
     /// Caveats:
-    /// - `SessionEnd` is kept because the `parse()` arm still accepts it,
-    ///   but Codex CLI does **not** fire SessionEnd. The existing README
-    ///   config and parse arm are effectively dead and should be reviewed.
     /// - `PostToolUse` fires only for Bash (Codex's `PostToolUseToolInput`
     ///   is a typed `{ command: String }` struct); the resulting activity
     ///   log is Bash-only.
@@ -26,11 +23,6 @@ impl CodexAdapter {
             trigger: "SessionStart",
             matcher: Some("startup|resume"),
             kind: AgentEventKind::SessionStart,
-        },
-        HookRegistration {
-            trigger: "SessionEnd",
-            matcher: None,
-            kind: AgentEventKind::SessionEnd,
         },
         HookRegistration {
             trigger: "UserPromptSubmit",
@@ -60,7 +52,6 @@ impl EventAdapter for CodexAdapter {
                 worktree: None,
                 agent_id: None,
             }),
-            "session-end" => Some(AgentEvent::SessionEnd),
             "user-prompt-submit" => Some(AgentEvent::UserPromptSubmit {
                 agent: CODEX_AGENT.into(),
                 cwd: json_str(input, "cwd").into(),
@@ -127,12 +118,10 @@ mod tests {
     }
 
     #[test]
-    fn session_end() {
-        let adapter = CodexAdapter;
-        assert_eq!(
-            adapter.parse("session-end", &json!({})).unwrap(),
-            AgentEvent::SessionEnd
-        );
+    fn session_end_not_supported() {
+        // Codex CLI does not fire SessionEnd (verified against
+        // openai/codex:codex-rs/hooks/src/engine/config.rs).
+        assert!(CodexAdapter.parse("session-end", &json!({})).is_none());
     }
 
     #[test]

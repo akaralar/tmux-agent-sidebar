@@ -881,12 +881,6 @@ mod tests {
           "trigger": "SessionStart"
         },
         {
-          "command": "bash /fake/hook.sh codex session-end",
-          "event": "session-end",
-          "matcher": null,
-          "trigger": "SessionEnd"
-        },
-        {
           "command": "bash /fake/hook.sh codex user-prompt-submit",
           "event": "user-prompt-submit",
           "matcher": null,
@@ -912,17 +906,6 @@ mod tests {
               "hooks": [
                 {
                   "command": "bash /fake/hook.sh codex activity-log",
-                  "type": "command"
-                }
-              ],
-              "matcher": ""
-            }
-          ],
-          "SessionEnd": [
-            {
-              "hooks": [
-                {
-                  "command": "bash /fake/hook.sh codex session-end",
                   "type": "command"
                 }
               ],

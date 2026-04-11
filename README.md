@@ -353,16 +353,6 @@ Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar doctor 
         ]
       }
     ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh codex session-end"
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "hooks": [
@@ -418,7 +408,7 @@ Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar doctor 
 ### Known Limitations
 
 - **Waiting status (Claude Code)** — After approving a permission prompt, the status stays `waiting` until the next hook event fires. This is a limitation of the Claude Code hook system.
-- **Codex hook coverage** — Codex emits `SessionStart`, `UserPromptSubmit`, `Stop`, `SessionEnd`, and `PostToolUse`. `PostToolUse` is limited to the `Bash` tool (Codex's schema types `tool_input` as `{ command: string }`), so the Codex activity log shows only Bash commands. Waiting status, task progress, subagent display, and worktree tracking remain unavailable.
+- **Codex hook coverage** — Codex emits `SessionStart`, `UserPromptSubmit`, `Stop`, and `PostToolUse`. `PostToolUse` is limited to the `Bash` tool (Codex's schema types `tool_input` as `{ command: string }`), so the Codex activity log shows only Bash commands. Waiting status, task progress, subagent display, and worktree tracking remain unavailable.
 
 ## Customization
 
