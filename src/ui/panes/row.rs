@@ -287,7 +287,7 @@ fn prompt_rows(pane: &crate::tmux::PaneInfo, ctx: &RowCtx) -> Vec<Line<'static>>
     let prompt_color = if ctx.active {
         theme.text_active
     } else {
-        theme.text_muted
+        theme.text_inactive
     };
     let wrap_width = ctx.inner_width.saturating_sub(2);
     let wrapped = if is_response {
@@ -337,7 +337,7 @@ fn idle_hint_row(ctx: &RowCtx) -> Line<'static> {
     let idle_color = if ctx.active {
         ctx.theme.text_active
     } else {
-        ctx.theme.text_muted
+        ctx.theme.text_inactive
     };
     ctx.row_line(
         vec![Span::styled(

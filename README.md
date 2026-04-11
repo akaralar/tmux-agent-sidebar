@@ -394,7 +394,7 @@ Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar doctor 
 | `Tab` | Cycle status filter (All → Running → Waiting → Idle → Error) |
 | `Shift+Tab` | Switch bottom panel tab (Activity / Git) |
 | `Esc` | Return focus to agents panel / close repo popup |
-| Mouse click | Click agent to jump to its pane, click status tabs to filter, click the repo area to open the repo popup |
+| Mouse click | Jump to agent's pane / filter by status / open repo popup |
 
 
 ## Feature Support by Agent
@@ -445,7 +445,8 @@ set -g @sidebar_color_session 39         # session name (default: 39 blue)
 set -g @sidebar_color_agent_claude 174   # Claude brand color (default: 174 terracotta)
 set -g @sidebar_color_agent_codex 141    # Codex brand color (default: 141 purple)
 set -g @sidebar_color_text_active 255    # primary text (active rows, counts, filtered repo label) (default: 255 white)
-set -g @sidebar_color_text_muted 252     # secondary text (idle rows, tree branches, empty-state messages, inactive bottom tabs) (default: 252 light gray)
+set -g @sidebar_color_text_muted 252     # secondary text (tree branches, empty-state messages, inactive bottom tabs, activity log labels) (default: 252 light gray)
+set -g @sidebar_color_text_inactive 244  # body text of unfocused pane rows (prompt/response, idle hint) (default: 244 mid gray)
 set -g @sidebar_color_port 246           # port numbers (default: 246 light gray)
 set -g @sidebar_color_wait_reason 221    # wait reason text (default: 221 yellow)
 set -g @sidebar_color_selection 237      # selected row background (default: 237 dark gray)

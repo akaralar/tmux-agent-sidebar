@@ -34,6 +34,7 @@ fn test_all_color_theme_defaults() {
     // Text colors
     assert_eq!(theme.text_active, Color::Indexed(255));
     assert_eq!(theme.text_muted, Color::Indexed(252));
+    assert_eq!(theme.text_inactive, Color::Indexed(244));
 
     // Header/UI element colors
     assert_eq!(theme.session_header, Color::Indexed(39));
@@ -377,10 +378,10 @@ fn test_response_arrow_uses_response_arrow_color() {
         "Response arrow should use response_arrow color (74)"
     );
     assert!(styled.contains("bold"), "Response arrow should be bold");
-    // The response text itself uses text_muted (252) for inactive pane
+    // The response text itself uses text_active (255) for the focused pane
     assert!(
-        styled.contains("fg:252"),
-        "Response text should use text_muted color (252) for inactive pane"
+        styled.contains("fg:255"),
+        "Response text should use text_active color (255) for focused pane"
     );
 
     let plain = render_to_string(&mut state, 40, 27);

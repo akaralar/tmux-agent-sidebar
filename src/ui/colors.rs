@@ -23,6 +23,7 @@ pub struct ColorTheme {
     pub agent_codex: Color,
     pub text_active: Color,
     pub text_muted: Color,
+    pub text_inactive: Color,
     pub session_header: Color,
     pub port: Color,
     pub wait_reason: Color,
@@ -59,6 +60,7 @@ impl Default for ColorTheme {
             agent_codex: Color::Indexed(141),
             text_active: Color::Indexed(255),
             text_muted: Color::Indexed(252),
+            text_inactive: Color::Indexed(244),
             session_header: Color::Indexed(39),
             port: Color::Indexed(246),
             wait_reason: Color::Indexed(221),
@@ -109,6 +111,7 @@ impl ColorTheme {
         theme.agent_codex = read("@sidebar_color_agent_codex", theme.agent_codex);
         theme.text_active = read("@sidebar_color_text_active", theme.text_active);
         theme.text_muted = read("@sidebar_color_text_muted", theme.text_muted);
+        theme.text_inactive = read("@sidebar_color_text_inactive", theme.text_inactive);
         theme.session_header = read("@sidebar_color_session", theme.session_header);
         theme.port = read("@sidebar_color_port", theme.port);
         theme.wait_reason = read("@sidebar_color_wait_reason", theme.wait_reason);
