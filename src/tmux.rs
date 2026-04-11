@@ -38,6 +38,7 @@ pub enum PermissionMode {
     Plan,
     AcceptEdits,
     Auto,
+    DontAsk,
     BypassPermissions,
 }
 
@@ -46,7 +47,8 @@ impl PermissionMode {
         match s {
             "plan" => Self::Plan,
             "acceptEdits" => Self::AcceptEdits,
-            "auto" | "dontAsk" => Self::Auto,
+            "auto" => Self::Auto,
+            "dontAsk" => Self::DontAsk,
             "bypassPermissions" => Self::BypassPermissions,
             _ => Self::Default,
         }
@@ -58,6 +60,7 @@ impl PermissionMode {
             Self::Plan => "plan",
             Self::AcceptEdits => "edit",
             Self::Auto => "auto",
+            Self::DontAsk => "dontAsk",
             Self::BypassPermissions => "!",
         }
     }
@@ -583,7 +586,7 @@ mod tests {
             PermissionMode::AcceptEdits
         );
         assert_eq!(PermissionMode::from_str("auto"), PermissionMode::Auto);
-        assert_eq!(PermissionMode::from_str("dontAsk"), PermissionMode::Auto);
+        assert_eq!(PermissionMode::from_str("dontAsk"), PermissionMode::DontAsk);
         assert_eq!(
             PermissionMode::from_str("bypassPermissions"),
             PermissionMode::BypassPermissions
@@ -598,15 +601,21 @@ mod tests {
         assert_eq!(PermissionMode::Plan.badge(), "plan");
         assert_eq!(PermissionMode::AcceptEdits.badge(), "edit");
         assert_eq!(PermissionMode::Auto.badge(), "auto");
+        assert_eq!(PermissionMode::DontAsk.badge(), "dontAsk");
         assert_eq!(PermissionMode::BypassPermissions.badge(), "!");
     }
 
     #[test]
-    fn dont_ask_maps_to_auto_badge() {
-        // dontAsk should behave identically to auto in the UI
-        let mode = PermissionMode::from_str("dontAsk");
-        assert_eq!(mode, PermissionMode::Auto);
-        assert_eq!(mode.badge(), "auto");
+    fn dont_ask_is_distinct_from_auto() {
+        // Upstream docs list "auto" and "dontAsk" as separate permission_mode
+        // values (code.claude.com/docs/en/hooks "Common input fields"), so
+        // they must not collapse to the same variant.
+        let auto = PermissionMode::from_str("auto");
+        let dont_ask = PermissionMode::from_str("dontAsk");
+        assert_eq!(auto, PermissionMode::Auto);
+        assert_eq!(dont_ask, PermissionMode::DontAsk);
+        assert_ne!(auto, dont_ask);
+        assert_ne!(auto.badge(), dont_ask.badge());
     }
 
     #[test]

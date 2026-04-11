@@ -1,152 +1,128 @@
+mod row;
+
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
 use crate::state::{AppState, Focus, RepoFilter, StatusFilter};
 use crate::tmux::PaneStatus;
-use crate::ui::colors::ColorTheme;
-use crate::ui::icons::StatusIcons;
 
-use super::text::{
-    display_width, elapsed_label, pad_to, truncate_to_width, wait_reason_label, wrap_text,
-    wrap_text_char,
-};
+use super::text::{display_width, pad_to, truncate_to_width};
 
-/// Render the filter bar. Returns (Line, repo_button_col).
-fn render_filter_bar<'a>(state: &AppState, bar_width: u16) -> (Line<'a>, u16) {
+/// Render the status filter bar.
+fn render_filter_bar<'a>(state: &AppState, bar_width: u16) -> Line<'a> {
     let theme = &state.theme;
     let icons = &state.icons;
     let (all, running, waiting, idle, error) = state.status_counts();
 
-    let items: Vec<(StatusFilter, Option<(&str, ratatui::style::Color)>, usize)> = vec![
-        (StatusFilter::All, None, all),
+    let items: Vec<(StatusFilter, (&str, ratatui::style::Color), usize)> = vec![
+        (StatusFilter::All, (icons.all_icon(), theme.status_all), all),
         (
             StatusFilter::Running,
-            Some((
+            (
                 icons.status_icon(&PaneStatus::Running),
                 theme.status_running,
-            )),
+            ),
             running,
         ),
         (
             StatusFilter::Waiting,
-            Some((
+            (
                 icons.status_icon(&PaneStatus::Waiting),
                 theme.status_waiting,
-            )),
+            ),
             waiting,
         ),
         (
             StatusFilter::Idle,
-            Some((icons.status_icon(&PaneStatus::Idle), theme.status_idle)),
+            (icons.status_icon(&PaneStatus::Idle), theme.status_idle),
             idle,
         ),
         (
             StatusFilter::Error,
-            Some((icons.status_icon(&PaneStatus::Error), theme.status_error)),
+            (icons.status_icon(&PaneStatus::Error), theme.status_error),
             error,
         ),
     ];
 
     let mut spans: Vec<Span<'a>> = Vec::new();
     spans.push(Span::raw(" "));
-    let mut current_width: usize = 1;
 
-    let selected_style = |style: Style| {
-        style
-            .underline_color(theme.text_active)
-            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-    };
-
-    for (i, (filter, icon_info, count)) in items.into_iter().enumerate() {
+    for (i, (filter, (icon, icon_color), count)) in items.into_iter().enumerate() {
         if i > 0 {
             spans.push(Span::raw("  "));
-            current_width += 2;
         }
 
         let is_selected = state.global.status_filter == filter;
-
-        if let Some((icon, icon_color)) = icon_info {
-            let icon_style = Style::default().fg(icon_color);
-            let icon_style = if is_selected {
-                selected_style(icon_style)
-            } else {
-                icon_style
-            };
-            spans.push(Span::styled(icon.to_string(), icon_style));
-            current_width += display_width(icon);
-
-            let count_str = format!("{count}");
-            let count_style = if count == 0 {
-                Style::default().fg(theme.border_inactive)
-            } else {
-                Style::default().fg(theme.text_active)
-            };
-            let count_style = if is_selected {
-                selected_style(count_style)
-            } else {
-                count_style
-            };
-            current_width += count_str.len();
-            spans.push(Span::styled(count_str, count_style));
+        let icon_style = if is_selected {
+            Style::default().fg(icon_color)
         } else {
-            let style = if is_selected {
-                selected_style(Style::default().fg(theme.text_active))
-            } else {
-                Style::default().fg(theme.text_muted)
-            };
-            spans.push(Span::styled("All", style));
-            current_width += 3;
-        }
+            Style::default().fg(theme.filter_inactive)
+        };
+        spans.push(Span::styled(icon.to_string(), icon_style));
+
+        let count_str = format!("{count}");
+        let count_style = if count == 0 {
+            Style::default().fg(theme.filter_inactive)
+        } else {
+            Style::default().fg(theme.text_active)
+        };
+        spans.push(Span::styled(count_str, count_style));
     }
 
-    // Repo filter button — right-aligned
-    let repo_icon = "▼";
-    let repo_label = match &state.global.repo_filter {
-        RepoFilter::All => repo_icon.to_string(),
-        RepoFilter::Repo(name) => {
-            let max_w = 8;
-            let truncated = truncate_to_width(name, max_w);
-            format!("{} {}", repo_icon, truncated)
-        }
-    };
-    let repo_btn_width = display_width(&repo_label) + 1; // 1 for leading space
-    let gap = (bar_width as usize).saturating_sub(current_width + repo_btn_width);
-    let repo_button_col = (current_width + gap) as u16;
+    let _ = bar_width;
 
-    spans.push(Span::raw(" ".repeat(gap)));
+    Line::from(spans)
+}
+
+fn render_secondary_header<'a>(state: &AppState, width: u16) -> (Line<'a>, Option<u16>) {
+    let theme = &state.theme;
+    let banner_text = state
+        .version_notice
+        .as_ref()
+        .map(|notice| format!("new release v{}!", notice.latest_version));
+
+    if let Some(text) = banner_text {
+        let text = truncate_to_width(&text, width as usize);
+        let gap = pad_to(display_width(&text), width as usize);
+        return (
+            Line::from(vec![
+                Span::raw(gap),
+                Span::styled(text, Style::default().fg(theme.status_waiting)),
+            ]),
+            None,
+        );
+    }
+
+    let repo_icon = "▾";
+
+    let repo_label = match &state.global.repo_filter {
+        RepoFilter::All => "—".to_string(),
+        RepoFilter::Repo(name) => truncate_to_width(name, width.saturating_sub(3) as usize),
+    };
+    let repo_btn_width = display_width(&repo_label) + 2; // label + space + arrow
+
+    let gap = (width as usize).saturating_sub(repo_btn_width);
+    let repo_button_col = Some(gap as u16);
 
     let repo_has_filter = !matches!(state.global.repo_filter, RepoFilter::All);
-    let repo_style = if state.repo_popup_open {
-        Style::default()
-            .fg(theme.text_active)
-            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-    } else if repo_has_filter {
-        Style::default()
-            .fg(theme.text_active)
-            .add_modifier(Modifier::BOLD)
+    let repo_style = if state.repo_popup_open || repo_has_filter {
+        Style::default().fg(theme.text_active)
     } else {
         Style::default().fg(theme.text_muted)
     };
-    spans.push(Span::styled(format!(" {}", repo_label), repo_style));
+
+    let mut spans: Vec<Span<'a>> = Vec::new();
+    spans.push(Span::raw(" ".repeat(gap)));
+    spans.push(Span::styled(repo_label, repo_style));
+    spans.push(Span::raw(" "));
+    spans.push(Span::styled(repo_icon, repo_style));
 
     (Line::from(spans), repo_button_col)
-}
-
-fn render_version_banner<'a>(state: &AppState, width: usize) -> Option<Line<'a>> {
-    let theme = &state.theme;
-    let notice = state.version_notice.as_ref()?;
-    let text = format!("new release v{}!", notice.latest_version);
-    let gap = pad_to(display_width(&text), width);
-
-    Some(Line::from(vec![
-        Span::raw(gap),
-        Span::styled(text, Style::default().fg(theme.status_waiting)),
-    ]))
 }
 
 fn render_repo_popup(frame: &mut Frame, state: &mut AppState, area: Rect) {
@@ -157,13 +133,13 @@ fn render_repo_popup(frame: &mut Frame, state: &mut AppState, area: Rect) {
     }
 
     let max_name_len = repos.iter().map(|r| display_width(r)).max().unwrap_or(3);
-    // Width: marker(2) + name + padding(1) + borders(2)
-    let popup_width = (max_name_len + 5).min(area.width as usize).max(10) as u16;
-    let popup_height = (repos.len() as u16 + 2).min(area.height.saturating_sub(1)); // +2 for borders
+    // Width: padding(1 left + 1 right) + name + borders(2)
+    let popup_width = (max_name_len + 4).min(area.width as usize).max(10) as u16;
+    let popup_height = (repos.len() as u16 + 2).min(area.height.saturating_sub(2)); // +2 for borders
 
-    // Right-aligned, below filter bar
+    // Right-aligned, below the 2-row header
     let popup_x = area.x + area.width.saturating_sub(popup_width);
-    let popup_y = area.y + 1;
+    let popup_y = area.y + 2;
 
     let popup_rect = Rect::new(popup_x, popup_y, popup_width, popup_height);
     state.repo_popup_area = Some(popup_rect);
@@ -172,7 +148,7 @@ fn render_repo_popup(frame: &mut Frame, state: &mut AppState, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border_active));
+        .border_style(Style::default().fg(theme.accent));
     let inner = block.inner(popup_rect);
     frame.render_widget(block, popup_rect);
 
@@ -188,9 +164,8 @@ fn render_repo_popup(frame: &mut Frame, state: &mut AppState, area: Rect) {
             RepoFilter::Repo(n) => *n == *name,
         };
 
-        let marker = if is_current { "● " } else { "  " };
-        let truncated = truncate_to_width(name, inner_width.saturating_sub(2));
-        let text = format!("{}{}", marker, truncated);
+        let truncated = truncate_to_width(name, inner_width.saturating_sub(1));
+        let text = format!(" {}", truncated);
         let text_dw = display_width(&text);
         let padding = " ".repeat(inner_width.saturating_sub(text_dw));
 
@@ -198,11 +173,8 @@ fn render_repo_popup(frame: &mut Frame, state: &mut AppState, area: Rect) {
             Style::default()
                 .fg(theme.text_active)
                 .bg(theme.selection_bg)
-                .add_modifier(Modifier::BOLD)
         } else if is_current {
-            Style::default()
-                .fg(theme.text_active)
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(theme.text_active)
         } else {
             Style::default().fg(theme.text_muted)
         };
@@ -229,29 +201,34 @@ pub fn draw_agents(frame: &mut Frame, state: &mut AppState, area: Rect) {
         width: area.width,
         height: 1.min(area.height),
     };
-    let (filter_line, repo_btn_col) = render_filter_bar(state, area.width);
-    state.repo_button_col = repo_btn_col;
+    let filter_line = render_filter_bar(state, area.width);
     frame.render_widget(Paragraph::new(vec![filter_line]), filter_area);
+
+    let secondary_area = Rect {
+        x: area.x,
+        y: area.y + 1,
+        width: area.width,
+        height: 1.min(area.height.saturating_sub(1)),
+    };
+    let (secondary_line, repo_btn_col) = render_secondary_header(state, area.width);
+    state.repo_button_col = repo_btn_col;
+    frame.render_widget(Paragraph::new(vec![secondary_line]), secondary_area);
 
     // Scrollable agent list below
     let list_area = Rect {
         x: area.x,
-        y: area.y + 1,
+        y: area.y + 2,
         width: area.width,
-        height: area.height.saturating_sub(1),
+        height: area.height.saturating_sub(2),
     };
 
     let mut lines: Vec<Line<'_>> = Vec::new();
     let mut line_to_row: Vec<Option<usize>> = Vec::new();
     let mut row_index: usize = 0;
 
-    if let Some(version_banner) = render_version_banner(state, width) {
-        lines.push(version_banner);
-        line_to_row.push(None);
-    }
-
     let filter = state.global.status_filter;
 
+    let mut first_group = true;
     for group in &state.repo_groups {
         if !state.global.repo_filter.matches_group(&group.name) {
             continue;
@@ -265,46 +242,32 @@ pub fn draw_agents(frame: &mut Frame, state: &mut AppState, area: Rect) {
             continue;
         }
 
+        if !first_group {
+            // Separate repo groups, but do not add a leading blank before
+            // the first repo so the list starts immediately below the header.
+            lines.push(Line::from(""));
+            line_to_row.push(None);
+        }
+        first_group = false;
+
         let group_has_focused_pane = state.focused_pane_id.as_ref().map_or(false, |fid| {
             group.panes.iter().any(|(p, _)| p.pane_id == *fid)
         });
 
-        let border_color = if group_has_focused_pane {
-            theme.border_active
-        } else {
-            theme.border_inactive
-        };
+        // Plain repo header at column 0 (no frame).
         let title = &group.name;
-
-        let title_dw = display_width(title);
-        let fill_len = width.saturating_sub(3 + title_dw + 1);
         let title_color = if group_has_focused_pane {
-            theme.border_active
+            theme.accent
         } else {
-            theme.text_muted
+            theme.text_active
         };
-        lines.push(Line::from(vec![
-            Span::styled("╭ ", Style::default().fg(border_color)),
-            Span::styled(title.clone(), Style::default().fg(title_color)),
-            Span::styled(
-                format!(" {}╮", "─".repeat(fill_len)),
-                Style::default().fg(border_color),
-            ),
-        ]));
+        lines.push(Line::from(Span::styled(
+            title.clone(),
+            Style::default().fg(title_color),
+        )));
         line_to_row.push(None);
 
-        for (pi, (pane, git_info)) in filtered_panes.iter().enumerate() {
-            if pi > 0 {
-                let gray = Style::default().fg(theme.border_inactive);
-                let dashes = "─".repeat(width.saturating_sub(4));
-                lines.push(Line::from(vec![
-                    Span::styled("│", Style::default().fg(border_color)),
-                    Span::styled(format!(" {} ", dashes), gray),
-                    Span::styled("│", Style::default().fg(border_color)),
-                ]));
-                line_to_row.push(None);
-            }
-
+        for (pane, git_info) in filtered_panes.iter() {
             let is_selected = state.sidebar_focused
                 && state.focus == Focus::Panes
                 && row_index == state.global.selected_pane_row;
@@ -316,17 +279,14 @@ pub fn draw_agents(frame: &mut Frame, state: &mut AppState, area: Rect) {
 
             let pane_state = state.pane_state(&pane.pane_id);
             let ports = pane_state.map(|s| s.ports.as_slice());
-            let command = None;
             let task_progress = pane_state.and_then(|s| s.task_progress.as_ref());
-            let pane_lines = render_pane_lines_with_ports(
+            let pane_lines = row::render_pane_lines_with_ports(
                 pane,
                 git_info,
                 ports,
-                command,
                 task_progress,
                 is_selected,
                 is_active,
-                border_color,
                 width,
                 &state.icons,
                 theme,
@@ -341,13 +301,6 @@ pub fn draw_agents(frame: &mut Frame, state: &mut AppState, area: Rect) {
 
             row_index += 1;
         }
-
-        let bottom_line = format!("╰{}╯", "─".repeat(width.saturating_sub(2)));
-        lines.push(Line::from(Span::styled(
-            bottom_line,
-            Style::default().fg(border_color),
-        )));
-        line_to_row.push(None);
     }
 
     state.line_to_row = line_to_row;
@@ -367,20 +320,12 @@ pub fn draw_agents(frame: &mut Frame, state: &mut AppState, area: Rect) {
             }
         }
         if let (Some(first), Some(last)) = (first_line, last_line) {
-            let mut effective_last = last;
-            for i in (last + 1)..state.line_to_row.len() {
-                if state.line_to_row[i].is_none() {
-                    effective_last = i;
-                } else {
-                    break;
-                }
-            }
             let visible_h = list_area.height as usize;
             let offset = state.panes_scroll.offset;
             if first < offset {
                 state.panes_scroll.offset = first.saturating_sub(1);
-            } else if effective_last >= offset + visible_h {
-                state.panes_scroll.offset = (effective_last + 1).saturating_sub(visible_h);
+            } else if last >= offset + visible_h {
+                state.panes_scroll.offset = (last + 1).saturating_sub(visible_h);
             }
         }
     }
@@ -394,413 +339,13 @@ pub fn draw_agents(frame: &mut Frame, state: &mut AppState, area: Rect) {
     }
 }
 
-fn bordered_line<'a>(
-    border_style: Style,
-    apply_bg: &dyn Fn(Style) -> Style,
-    inner_width: usize,
-    content_spans: Vec<Span<'a>>,
-    content_width: usize,
-) -> Line<'a> {
-    let padding = pad_to(content_width, inner_width);
-    let mut spans = vec![
-        Span::styled("│", border_style),
-        Span::styled(" ", apply_bg(Style::default())),
-    ];
-    spans.extend(content_spans);
-    spans.push(Span::styled(padding, apply_bg(Style::default())));
-    spans.push(Span::styled("│", border_style));
-    Line::from(spans)
-}
-
-fn bordered_split_line<'a>(
-    border_style: Style,
-    apply_bg: &dyn Fn(Style) -> Style,
-    inner_width: usize,
-    left_spans: Vec<Span<'a>>,
-    left_width: usize,
-    right_spans: Vec<Span<'a>>,
-    right_width: usize,
-) -> Line<'a> {
-    let padding = inner_width.saturating_sub(left_width + right_width);
-    let mut spans = vec![
-        Span::styled("│", border_style),
-        Span::styled(" ", apply_bg(Style::default())),
-    ];
-    spans.extend(left_spans);
-    spans.push(Span::styled(
-        " ".repeat(padding),
-        apply_bg(Style::default()),
-    ));
-    spans.extend(right_spans);
-    spans.push(Span::styled("│", border_style));
-    Line::from(spans)
-}
-
-fn render_pane_lines_with_ports<'a>(
-    pane: &crate::tmux::PaneInfo,
-    git_info: &crate::group::PaneGitInfo,
-    ports: Option<&[u16]>,
-    _command: Option<&str>,
-    task_progress: Option<&crate::activity::TaskProgress>,
-    selected: bool,
-    active: bool,
-    border_color: ratatui::style::Color,
-    width: usize,
-    icons: &StatusIcons,
-    theme: &ColorTheme,
-    spinner_frame: usize,
-    now: u64,
-) -> Vec<Line<'a>> {
-    let mut out: Vec<Line<'a>> = Vec::new();
-
-    let border_style = Style::default().fg(border_color);
-    let inner_width = width.saturating_sub(3);
-
-    let (icon, pulse_color) = running_icon_for(&pane.status, spinner_frame, icons);
-    let icon_color =
-        pulse_color.unwrap_or_else(|| theme.status_color(&pane.status, pane.attention));
-    use crate::tmux::PermissionMode;
-    let title = pane.agent.label();
-    let badge = pane.permission_mode.badge();
-    let elapsed = elapsed_label(pane.started_at, now);
-
-    let title_fg = theme.agent_color(&pane.agent);
-    let is_active_status = matches!(pane.status, PaneStatus::Running | PaneStatus::Waiting);
-    let elapsed_fg = if is_active_status {
-        theme.text_active
-    } else {
-        theme.text_muted
-    };
-    let active_mod = if active {
-        Modifier::BOLD
-    } else {
-        Modifier::empty()
-    };
-    let bg = if selected {
-        Some(theme.selection_bg)
-    } else {
-        None
-    };
-
-    let apply_bg = |s: Style| match bg {
-        Some(c) => s.bg(c),
-        None => s,
-    };
-
-    let badge_extra = if badge.is_empty() { 0 } else { 1 };
-    let left_dw =
-        display_width(icon) + 1 + display_width(title) + badge_extra + display_width(badge);
-    let available_for_elapsed = inner_width.saturating_sub(left_dw);
-    let elapsed = truncate_to_width(&elapsed, available_for_elapsed);
-    let elapsed_dw = display_width(&elapsed);
-    let padding = pad_to(left_dw + elapsed_dw, inner_width);
-
-    let mut status_spans = vec![
-        Span::styled("│", border_style),
-        Span::styled(" ", apply_bg(Style::default())),
-        Span::styled(icon.to_string(), apply_bg(Style::default().fg(icon_color))),
-        Span::styled(
-            format!(" {}", title),
-            apply_bg(Style::default().fg(title_fg).add_modifier(active_mod)),
-        ),
-    ];
-    if !badge.is_empty() {
-        let badge_color = match pane.permission_mode {
-            PermissionMode::BypassPermissions => theme.badge_danger,
-            PermissionMode::Auto => theme.badge_auto,
-            PermissionMode::Plan => theme.badge_plan,
-            PermissionMode::AcceptEdits => theme.badge_auto,
-            PermissionMode::Default => theme.text_muted,
-        };
-        status_spans.push(Span::styled(
-            format!(" {}", badge),
-            apply_bg(Style::default().fg(badge_color)),
-        ));
-    }
-    status_spans.push(Span::styled(padding, apply_bg(Style::default())));
-    status_spans.push(Span::styled(
-        elapsed,
-        apply_bg(Style::default().fg(elapsed_fg)),
-    ));
-    status_spans.push(Span::styled("│", border_style));
-    out.push(Line::from(status_spans));
-
-    // Branch + port line
-    let branch = super::text::branch_label(git_info);
-    let branch_color = theme.branch;
-    let port_text = ports.and_then(|ports| {
-        if ports.is_empty() {
-            return None;
-        }
-        let mut port_list = String::new();
-        for (i, port) in ports.iter().enumerate() {
-            if i > 0 {
-                port_list.push_str(", ");
-            }
-            port_list.push_str(&port.to_string());
-        }
-        Some(format!(":{}", port_list))
-    });
-    if !branch.is_empty() || port_text.is_some() {
-        let left_prefix = "  ";
-        let right_prefix = "  ";
-        let right_text = port_text.unwrap_or_default();
-        let right_width = if right_text.is_empty() {
-            0
-        } else {
-            display_width(right_prefix) + display_width(&right_text)
-        };
-        let left_room = inner_width.saturating_sub(right_width);
-        let max_branch_width = left_room.saturating_sub(display_width(left_prefix));
-        let truncated_branch = truncate_to_width(&branch, max_branch_width);
-        let left_text = format!("{}{}", left_prefix, truncated_branch);
-        let left_width = display_width(&left_text);
-
-        let mut left_spans = vec![Span::styled(
-            left_text,
-            apply_bg(Style::default().fg(branch_color)),
-        )];
-        if branch.is_empty() {
-            left_spans.clear();
-        }
-        let right_spans = if right_text.is_empty() {
-            vec![]
-        } else {
-            vec![Span::styled(
-                format!("{}{}", right_prefix, right_text),
-                apply_bg(Style::default().fg(theme.port)),
-            )]
-        };
-        let right_width = if right_text.is_empty() {
-            0
-        } else {
-            display_width(right_prefix) + display_width(&right_text)
-        };
-        let left_width = if branch.is_empty() { 0 } else { left_width };
-        out.push(bordered_split_line(
-            border_style,
-            &apply_bg,
-            inner_width,
-            left_spans,
-            left_width,
-            right_spans,
-            right_width,
-        ));
-    }
-
-    // Task progress line
-    if let Some(progress) = task_progress {
-        if !progress.is_empty() {
-            use crate::activity::TaskStatus;
-            let mut icons = String::new();
-            for (_, status) in &progress.tasks {
-                let ch = match status {
-                    TaskStatus::Completed => "✔",
-                    TaskStatus::InProgress => "◼",
-                    TaskStatus::Pending => "◻",
-                };
-                icons.push_str(ch);
-            }
-            let summary = format!(
-                "  {} {}/{}",
-                icons,
-                progress.completed_count(),
-                progress.total()
-            );
-            let summary_dw = display_width(&summary);
-            let task_color = theme.task_progress;
-            out.push(bordered_line(
-                border_style,
-                &apply_bg,
-                inner_width,
-                vec![Span::styled(
-                    summary,
-                    apply_bg(Style::default().fg(task_color)),
-                )],
-                summary_dw,
-            ));
-        }
-    }
-
-    if !pane.subagents.is_empty() {
-        let subagent_color = theme.subagent;
-        let tree_color = theme.text_muted;
-        let last_idx = pane.subagents.len() - 1;
-        for (i, sa) in pane.subagents.iter().enumerate() {
-            let connector = if i == last_idx { "└ " } else { "├ " };
-            let numbered = if sa.contains('#') {
-                sa.clone()
-            } else {
-                format!("{} #{}", sa, i + 1)
-            };
-            let prefix = format!("  {}", connector);
-            let prefix_dw = display_width(&prefix);
-            let max_sa_w = inner_width.saturating_sub(prefix_dw);
-            let truncated_sa = truncate_to_width(&numbered, max_sa_w);
-            let text_dw = prefix_dw + display_width(&truncated_sa);
-            out.push(bordered_line(
-                border_style,
-                &apply_bg,
-                inner_width,
-                vec![
-                    Span::styled(prefix, apply_bg(Style::default().fg(tree_color))),
-                    Span::styled(truncated_sa, apply_bg(Style::default().fg(subagent_color))),
-                ],
-                text_dw,
-            ));
-        }
-    }
-
-    if !pane.wait_reason.is_empty() {
-        let reason = wait_reason_label(&pane.wait_reason);
-        let text = format!("  {}", reason);
-        let text_dw = display_width(&text);
-        let reason_color = if matches!(pane.status, PaneStatus::Error) {
-            theme.status_error
-        } else {
-            theme.wait_reason
-        };
-        out.push(bordered_line(
-            border_style,
-            &apply_bg,
-            inner_width,
-            vec![Span::styled(
-                text,
-                apply_bg(Style::default().fg(reason_color)),
-            )],
-            text_dw,
-        ));
-    }
-
-    if !pane.prompt.is_empty() {
-        let is_response = pane.prompt_is_response;
-        let prompt_color = if active {
-            theme.text_active
-        } else {
-            theme.text_muted
-        };
-        let display_prompt = pane.prompt.clone();
-        let wrap_width = inner_width.saturating_sub(if is_response { 4 } else { 2 });
-        let wrapped = if is_response {
-            wrap_text_char(&display_prompt, wrap_width, 3)
-        } else {
-            wrap_text(&display_prompt, wrap_width, 3)
-        };
-        for (li, wl) in wrapped.iter().enumerate() {
-            if is_response && li == 0 {
-                let arrow_color = theme.response_arrow;
-                let text_dw = 4 + display_width(wl); // "  ▶ " + text
-                out.push(bordered_line(
-                    border_style,
-                    &apply_bg,
-                    inner_width,
-                    vec![
-                        Span::styled(
-                            "  ▶ ",
-                            apply_bg(
-                                Style::default()
-                                    .fg(arrow_color)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                        ),
-                        Span::styled(wl.clone(), apply_bg(Style::default().fg(prompt_color))),
-                    ],
-                    text_dw,
-                ));
-            } else {
-                let indent = if is_response { "    " } else { "  " };
-                let text = format!("{}{}", indent, wl);
-                let text_dw = display_width(&text);
-                out.push(bordered_line(
-                    border_style,
-                    &apply_bg,
-                    inner_width,
-                    vec![Span::styled(
-                        text,
-                        apply_bg(Style::default().fg(prompt_color)),
-                    )],
-                    text_dw,
-                ));
-            }
-        }
-    } else if matches!(pane.status, PaneStatus::Idle) {
-        let text = "  Waiting for prompt…";
-        let text_dw = display_width(text);
-        let idle_color = if active {
-            theme.text_active
-        } else {
-            theme.text_muted
-        };
-        out.push(bordered_line(
-            border_style,
-            &apply_bg,
-            inner_width,
-            vec![Span::styled(
-                text.to_string(),
-                apply_bg(Style::default().fg(idle_color)),
-            )],
-            text_dw,
-        ));
-    }
-
-    out
-}
-
-pub(crate) fn running_icon_for<'a>(
-    status: &PaneStatus,
-    spinner_frame: usize,
-    icons: &'a StatusIcons,
-) -> (&'a str, Option<ratatui::style::Color>) {
-    use crate::SPINNER_PULSE;
-
-    match status {
-        PaneStatus::Running => {
-            let color_idx = SPINNER_PULSE[spinner_frame % SPINNER_PULSE.len()];
-            (
-                icons.status_icon(status),
-                Some(ratatui::style::Color::Indexed(color_idx)),
-            )
-        }
-        _ => (icons.status_icon(status), None),
-    }
-}
+#[cfg(test)]
+use crate::group::PaneGitInfo;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::group::PaneGitInfo;
-    use crate::tmux::{AgentType, PaneInfo, PermissionMode};
-    use crate::ui::icons::StatusIcons;
-
-    fn pane(permission_mode: PermissionMode, status: PaneStatus, prompt: &str) -> PaneInfo {
-        pane_with_response(permission_mode, status, prompt, false)
-    }
-
-    fn pane_with_response(
-        permission_mode: PermissionMode,
-        status: PaneStatus,
-        prompt: &str,
-        is_response: bool,
-    ) -> PaneInfo {
-        PaneInfo {
-            pane_id: "%1".into(),
-            pane_active: false,
-            status,
-            attention: false,
-            agent: AgentType::Codex,
-            path: "/tmp/project".into(),
-            current_command: String::new(),
-            prompt: prompt.into(),
-            prompt_is_response: is_response,
-            started_at: None,
-            wait_reason: String::new(),
-            permission_mode,
-            subagents: vec![],
-            pane_pid: None,
-            worktree_name: String::new(),
-            worktree_branch: String::new(),
-        }
-    }
+    use ratatui::style::Modifier;
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans
@@ -810,484 +355,18 @@ mod tests {
     }
 
     #[test]
-    fn render_version_banner_right_aligns() {
+    fn render_secondary_header_version_banner_right_aligns() {
         let mut state = crate::state::AppState::new(String::new());
         state.version_notice = Some(crate::version::UpdateNotice {
             local_version: "0.2.6".into(),
             latest_version: "0.2.7".into(),
         });
 
-        let line = render_version_banner(&state, 30).expect("banner should render");
+        let line = render_secondary_header(&state, 30).0;
         let text = line_text(&line);
 
         assert!(text.ends_with("new release v0.2.7!"));
         assert_eq!(display_width(&text), 30);
-    }
-
-    #[test]
-    fn render_pane_lines_shows_permission_badge() {
-        let theme = ColorTheme::default();
-        let pane = pane(PermissionMode::Auto, PaneStatus::Running, "");
-        let lines = render_pane_lines_with_ports(
-            &pane,
-            &PaneGitInfo::default(),
-            None,
-            None,
-            None,
-            false,
-            false,
-            theme.border_active,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        let status = line_text(&lines[0]);
-        assert!(status.contains(" codex auto"));
-    }
-
-    #[test]
-    fn render_pane_lines_shows_branch_and_ports_on_same_row() {
-        let theme = ColorTheme::default();
-        let pane = pane(PermissionMode::Default, PaneStatus::Running, "");
-        let ports = vec![3000, 5173];
-        let lines = render_pane_lines_with_ports(
-            &pane,
-            &PaneGitInfo {
-                repo_root: Some("/tmp/project".into()),
-                branch: Some("feature/sidebar".into()),
-                is_worktree: false,
-                worktree_name: None,
-            },
-            Some(&ports),
-            None,
-            None,
-            false,
-            false,
-            theme.border_active,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        assert!(lines.len() >= 2);
-        let branch_port_line = line_text(&lines[1]);
-        assert!(branch_port_line.contains("feature/sidebar"));
-        assert!(branch_port_line.contains(":3000, 5173"));
-        assert!(branch_port_line.find("feature/sidebar") < branch_port_line.find(":3000, 5173"));
-    }
-
-    #[test]
-    fn render_pane_lines_shows_command_row() {
-        let theme = ColorTheme::default();
-        let mut pane = pane(PermissionMode::Default, PaneStatus::Running, "");
-        pane.current_command = "npm run dev -- --port 3000".into();
-        let lines = render_pane_lines_with_ports(
-            &pane,
-            &PaneGitInfo::default(),
-            None,
-            Some("npm run dev -- --port 3000"),
-            None,
-            false,
-            false,
-            theme.border_active,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        assert_eq!(lines.len(), 1);
-        assert!(lines.iter().all(|line| !line_text(line).contains("cmd:")));
-    }
-
-    #[test]
-    fn render_pane_lines_truncates_long_branch_when_ports_present() {
-        let theme = ColorTheme::default();
-        let pane = pane(PermissionMode::Default, PaneStatus::Running, "");
-        let ports = vec![3000];
-        let lines = render_pane_lines_with_ports(
-            &pane,
-            &PaneGitInfo {
-                repo_root: Some("/tmp/project".into()),
-                branch: Some("feature/sidebar/really-long-branch-name-that-should-truncate".into()),
-                is_worktree: false,
-                worktree_name: None,
-            },
-            Some(&ports),
-            None,
-            None,
-            false,
-            false,
-            theme.border_active,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        assert!(lines.len() >= 2);
-        let branch_port_line = line_text(&lines[1]);
-        assert!(
-            branch_port_line.contains('…'),
-            "long branch should be truncated"
-        );
-        assert!(branch_port_line.contains(":3000"));
-        assert!(
-            branch_port_line.find('…') < branch_port_line.find(":3000"),
-            "branch truncation should remain left of the port text"
-        );
-    }
-
-    #[test]
-    fn render_pane_lines_uses_injected_now_for_elapsed() {
-        let theme = ColorTheme::default();
-        let mut pane = pane(PermissionMode::Default, PaneStatus::Running, "");
-        pane.started_at = Some(1_000_000 - 125);
-        let lines = render_pane_lines_with_ports(
-            &pane,
-            &PaneGitInfo::default(),
-            None,
-            None,
-            None,
-            false,
-            false,
-            theme.border_active,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            1_000_000,
-        );
-
-        let status = line_text(&lines[0]);
-        assert!(status.contains("2m5s"));
-    }
-
-    #[test]
-    fn running_icon_for_all_statuses() {
-        let icons = StatusIcons::default();
-        assert_eq!(running_icon_for(&PaneStatus::Idle, 0, &icons), ("○", None));
-        assert_eq!(
-            running_icon_for(&PaneStatus::Waiting, 0, &icons),
-            ("◐", None)
-        );
-        assert_eq!(running_icon_for(&PaneStatus::Error, 0, &icons), ("✕", None));
-        assert_eq!(
-            running_icon_for(&PaneStatus::Unknown, 0, &icons),
-            ("·", None)
-        );
-
-        let (icon, color) = running_icon_for(&PaneStatus::Running, 0, &icons);
-        assert_eq!(icon, "●");
-        assert_eq!(color, Some(ratatui::style::Color::Indexed(82)));
-    }
-
-    #[test]
-    fn render_pane_lines_shows_idle_prompt_hint() {
-        let theme = ColorTheme::default();
-        let pane = pane(PermissionMode::Default, PaneStatus::Idle, "");
-        let lines = render_pane_lines_with_ports(
-            &pane,
-            &PaneGitInfo::default(),
-            None,
-            None,
-            None,
-            false,
-            false,
-            theme.border_active,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        assert_eq!(lines.len(), 2);
-        let hint = line_text(&lines[1]);
-        assert!(hint.contains("Waiting for prompt"));
-    }
-
-    #[test]
-    fn render_pane_lines_wraps_prompt_when_present() {
-        let theme = ColorTheme::default();
-        let pane = pane(
-            PermissionMode::BypassPermissions,
-            PaneStatus::Idle,
-            "hello world from codex",
-        );
-        let lines = render_pane_lines_with_ports(
-            &pane,
-            &PaneGitInfo::default(),
-            None,
-            None,
-            None,
-            false,
-            false,
-            theme.border_active,
-            18,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        assert!(lines.len() >= 2);
-        let status = line_text(&lines[0]);
-        assert!(status.contains(" codex !"));
-        assert!(!line_text(&lines[1]).contains("Waiting for prompt"));
-    }
-
-    #[test]
-    fn render_pane_lines_shows_single_subagent() {
-        let theme = ColorTheme::default();
-        let mut p = pane(PermissionMode::Default, PaneStatus::Running, "test");
-        p.subagents = vec!["Explore".into()];
-        let lines = render_pane_lines_with_ports(
-            &p,
-            &PaneGitInfo::default(),
-            None,
-            None,
-            None,
-            false,
-            false,
-            theme.border_active,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        // status + subagent + prompt = 3 lines minimum
-        assert!(lines.len() >= 3);
-        let sub_line = line_text(&lines[1]);
-        assert!(sub_line.contains("└ "));
-        assert!(sub_line.contains("Explore #1"));
-    }
-
-    #[test]
-    fn render_pane_lines_shows_multiple_subagents_tree() {
-        let theme = ColorTheme::default();
-        let mut p = pane(PermissionMode::Default, PaneStatus::Running, "test");
-        p.subagents = vec!["Explore #1".into(), "Plan".into(), "Explore #2".into()];
-        let lines = render_pane_lines_with_ports(
-            &p,
-            &PaneGitInfo::default(),
-            None,
-            None,
-            None,
-            false,
-            false,
-            theme.border_active,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        // status + 3 subagents + prompt = 5 lines minimum
-        assert!(lines.len() >= 5);
-        assert!(line_text(&lines[1]).contains("├ "));
-        assert!(line_text(&lines[1]).contains("Explore #1"));
-        assert!(line_text(&lines[2]).contains("├ "));
-        assert!(line_text(&lines[2]).contains("Plan #2"));
-        assert!(line_text(&lines[3]).contains("└ "));
-        assert!(line_text(&lines[3]).contains("Explore #2"));
-    }
-
-    #[test]
-    fn render_pane_lines_subagents_before_wait_reason() {
-        let theme = ColorTheme::default();
-        let mut p = pane(PermissionMode::Default, PaneStatus::Waiting, "");
-        p.subagents = vec!["Explore".into()];
-        p.wait_reason = "permission_prompt".into();
-        let lines = render_pane_lines_with_ports(
-            &p,
-            &PaneGitInfo::default(),
-            None,
-            None,
-            None,
-            false,
-            false,
-            theme.border_active,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        // status + subagent + wait_reason + idle hint = 4
-        assert!(lines.len() >= 3);
-        let sub_line = line_text(&lines[1]);
-        assert!(sub_line.contains("Explore #1"));
-        let reason_line = line_text(&lines[2]);
-        assert!(reason_line.contains("permission required"));
-    }
-
-    #[test]
-    fn render_pane_lines_response_shows_arrow() {
-        let theme = ColorTheme::default();
-        let p = pane_with_response(
-            PermissionMode::Default,
-            PaneStatus::Idle,
-            "Task completed successfully",
-            true,
-        );
-        let lines = render_pane_lines_with_ports(
-            &p,
-            &PaneGitInfo::default(),
-            None,
-            None,
-            None,
-            false,
-            false,
-            theme.border_active,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        assert!(lines.len() >= 2);
-        let response_line = line_text(&lines[1]);
-        assert!(response_line.contains("▶"));
-        assert!(response_line.contains("Task completed successfully"));
-    }
-
-    #[test]
-    fn render_pane_lines_response_uses_char_wrap() {
-        let theme = ColorTheme::default();
-        // Long response that would word-wrap at spaces but should char-wrap instead
-        let p = pane_with_response(
-            PermissionMode::Default,
-            PaneStatus::Idle,
-            "abcdef ghijk lmnop qrstu vwxyz",
-            true,
-        );
-        // Width 20: inner_width=17, prefix=4, so wrap at 13 chars
-        let lines = render_pane_lines_with_ports(
-            &p,
-            &PaneGitInfo::default(),
-            None,
-            None,
-            None,
-            false,
-            false,
-            theme.border_active,
-            20,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        assert!(lines.len() >= 2);
-        // First line has ▶ + start of text
-        let first = line_text(&lines[1]);
-        assert!(first.contains("▶"));
-        // Second line should NOT have trimmed spaces (char-wrap, not word-wrap)
-        // With word-wrap "abcdef ghijk " would break at "ghijk", char-wrap fills fully
-        let second = line_text(&lines[2]);
-        assert!(!second.starts_with("│  ghijk"));
-    }
-
-    #[test]
-    fn render_pane_lines_normal_prompt_not_detected_as_response() {
-        let theme = ColorTheme::default();
-        let p = pane(PermissionMode::Default, PaneStatus::Running, "fix the bug");
-        let lines = render_pane_lines_with_ports(
-            &p,
-            &PaneGitInfo::default(),
-            None,
-            None,
-            None,
-            false,
-            false,
-            theme.border_active,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        assert!(lines.len() >= 2);
-        let prompt_line = line_text(&lines[1]);
-        assert!(!prompt_line.contains("▶"));
-        assert!(prompt_line.contains("fix the bug"));
-    }
-
-    #[test]
-    fn render_pane_lines_shows_task_progress() {
-        use crate::activity::{TaskProgress, TaskStatus};
-        let theme = ColorTheme::default();
-        let p = pane(PermissionMode::Default, PaneStatus::Running, "");
-        let progress = TaskProgress {
-            tasks: vec![
-                ("Task A".into(), TaskStatus::Completed),
-                ("Task B".into(), TaskStatus::InProgress),
-                ("Task C".into(), TaskStatus::Pending),
-            ],
-        };
-        let lines = render_pane_lines_with_ports(
-            &p,
-            &PaneGitInfo::default(),
-            None,
-            None,
-            Some(&progress),
-            false,
-            false,
-            theme.border_active,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        // status + task progress + idle hint = 3 lines
-        assert!(lines.len() >= 2);
-        let task_line = line_text(&lines[1]);
-        assert!(task_line.contains("✔◼◻"));
-        assert!(task_line.contains("1/3"));
-    }
-
-    #[test]
-    fn render_pane_lines_no_task_line_when_empty() {
-        use crate::activity::TaskProgress;
-        let theme = ColorTheme::default();
-        let p = pane(PermissionMode::Default, PaneStatus::Idle, "");
-        let progress = TaskProgress { tasks: vec![] };
-        let lines = render_pane_lines_with_ports(
-            &p,
-            &PaneGitInfo::default(),
-            None,
-            None,
-            Some(&progress),
-            false,
-            false,
-            theme.border_active,
-            40,
-            &StatusIcons::default(),
-            &theme,
-            0,
-            0,
-        );
-
-        // Should not have task line, just status + idle hint
-        assert_eq!(lines.len(), 2);
-        let hint = line_text(&lines[1]);
-        assert!(hint.contains("Waiting for prompt"));
     }
 
     // ─── render_filter_bar tests ──────────────────────────────
@@ -1300,77 +379,185 @@ mod tests {
     }
 
     fn filter_bar_text(state: &AppState, width: u16) -> String {
-        let (line, _) = render_filter_bar(state, width);
+        let line = render_filter_bar(state, width);
         line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
     #[test]
-    fn render_filter_bar_includes_repo_button() {
+    fn render_filter_bar_is_status_only() {
         let state = make_state_with_groups(vec![]);
         let text = filter_bar_text(&state, 28);
         assert!(
-            text.contains("▼"),
-            "filter bar should contain repo button ▼"
+            !text.contains("▾"),
+            "status filter bar should not contain repo button"
         );
     }
 
     #[test]
-    fn render_filter_bar_repo_button_col_returned() {
+    fn render_filter_bar_uses_selected_and_inactive_icon_colors() {
+        let pane1 = crate::tmux::PaneInfo {
+            pane_id: "%2".into(),
+            pane_active: true,
+            status: PaneStatus::Running,
+            attention: false,
+            agent: crate::tmux::AgentType::Claude,
+            path: String::new(),
+            current_command: String::new(),
+            prompt: String::new(),
+            prompt_is_response: false,
+            started_at: None,
+            wait_reason: String::new(),
+            permission_mode: crate::tmux::PermissionMode::Default,
+            subagents: vec![],
+            pane_pid: None,
+            worktree_name: String::new(),
+            worktree_branch: String::new(),
+        };
+        let pane2 = crate::tmux::PaneInfo {
+            pane_id: "%3".into(),
+            pane_active: false,
+            status: PaneStatus::Idle,
+            attention: false,
+            agent: crate::tmux::AgentType::Codex,
+            path: String::new(),
+            current_command: String::new(),
+            prompt: String::new(),
+            prompt_is_response: false,
+            started_at: None,
+            wait_reason: String::new(),
+            permission_mode: crate::tmux::PermissionMode::Default,
+            subagents: vec![],
+            pane_pid: None,
+            worktree_name: String::new(),
+            worktree_branch: String::new(),
+        };
+        let mut state = make_state_with_groups(vec![crate::group::RepoGroup {
+            name: "project".into(),
+            has_focus: true,
+            panes: vec![
+                (pane1, PaneGitInfo::default()),
+                (pane2, PaneGitInfo::default()),
+            ],
+        }]);
+        state.global.status_filter = StatusFilter::Running;
+        let theme = &state.theme;
+
+        let line = render_filter_bar(&state, 30);
+        let cells: Vec<_> = line
+            .spans
+            .iter()
+            .filter(|span| !span.content.as_ref().trim().is_empty())
+            .collect();
+
+        assert_eq!(cells.len(), 10);
+
+        assert_eq!(cells[0].content.as_ref(), "≡");
+        assert_eq!(cells[0].style.fg, Some(theme.filter_inactive));
+        assert!(!cells[0].style.add_modifier.contains(Modifier::UNDERLINED));
+
+        assert_eq!(cells[1].content.as_ref(), "2");
+        assert_eq!(cells[1].style.fg, Some(theme.text_active));
+
+        assert_eq!(cells[2].content.as_ref(), "●");
+        assert_eq!(cells[2].style.fg, Some(theme.status_running));
+        assert!(!cells[2].style.add_modifier.contains(Modifier::UNDERLINED));
+
+        assert_eq!(cells[3].content.as_ref(), "1");
+        assert_eq!(cells[3].style.fg, Some(theme.text_active));
+
+        assert_eq!(cells[4].content.as_ref(), "◐");
+        assert_eq!(cells[4].style.fg, Some(theme.filter_inactive));
+
+        assert_eq!(cells[5].content.as_ref(), "0");
+        assert_eq!(cells[5].style.fg, Some(theme.filter_inactive));
+
+        assert_eq!(cells[6].content.as_ref(), "○");
+        assert_eq!(cells[6].style.fg, Some(theme.filter_inactive));
+
+        assert_eq!(cells[7].content.as_ref(), "1");
+        assert_eq!(cells[7].style.fg, Some(theme.text_active));
+
+        assert_eq!(cells[8].content.as_ref(), "✕");
+        assert_eq!(cells[8].style.fg, Some(theme.filter_inactive));
+
+        assert_eq!(cells[9].content.as_ref(), "0");
+        assert_eq!(cells[9].style.fg, Some(theme.filter_inactive));
+    }
+
+    #[test]
+    fn render_secondary_header_repo_button_col_returned() {
         let state = make_state_with_groups(vec![]);
-        let (_, col) = render_filter_bar(&state, 28);
-        // repo button should be near the right edge
-        assert!(
-            col > 15,
-            "repo button col should be right-aligned, got {col}"
-        );
-        assert!(
-            col < 28,
-            "repo button col should be within width, got {col}"
-        );
+        let (_, col) = render_secondary_header(&state, 28);
+        assert_eq!(col, Some(25), "repo button should be right-aligned");
     }
 
     #[test]
-    fn render_filter_bar_shows_repo_name_when_filtered() {
+    fn render_secondary_header_shows_repo_name_when_filtered() {
         let mut state = make_state_with_groups(vec![crate::group::RepoGroup {
             name: "my-app".into(),
             has_focus: true,
             panes: vec![],
         }]);
         state.global.repo_filter = RepoFilter::Repo("my-app".into());
-        let text = filter_bar_text(&state, 40);
+        let text = line_text(&render_secondary_header(&state, 40).0);
         assert!(
             text.contains("my-app"),
-            "filter bar should show filtered repo name, got: {text}"
+            "secondary header should show filtered repo name, got: {text}"
+        );
+        assert!(
+            text.find("my-app").unwrap() < text.find("▾").unwrap(),
+            "repo name should come before the arrow"
+        );
+        let (line, _) = render_secondary_header(&state, 40);
+        let repo_span = line
+            .spans
+            .iter()
+            .find(|span| span.content.contains("my-app"))
+            .unwrap();
+        assert!(
+            !repo_span.style.add_modifier.contains(Modifier::BOLD),
+            "filtered repo label should not be bold"
         );
     }
 
     #[test]
-    fn render_filter_bar_truncates_long_repo_name() {
+    fn render_secondary_header_truncates_long_repo_name() {
         let mut state = make_state_with_groups(vec![crate::group::RepoGroup {
-            name: "very-long-repository-name".into(),
+            name: "very-long-repository-name-that-exceeds-width".into(),
             has_focus: true,
             panes: vec![],
         }]);
-        state.global.repo_filter = RepoFilter::Repo("very-long-repository-name".into());
-        let text = filter_bar_text(&state, 28);
-        // Should be truncated, not the full name
+        state.global.repo_filter =
+            RepoFilter::Repo("very-long-repository-name-that-exceeds-width".into());
+        let text = line_text(&render_secondary_header(&state, 28).0);
         assert!(
-            !text.contains("very-long-repository-name"),
-            "long repo name should be truncated, got: {text}"
+            text.contains('…'),
+            "repo name should be truncated with an ellipsis"
         );
-        assert!(text.contains("▼"));
+        assert!(text.contains("▾"));
+        assert!(
+            !text.contains("very-long-repository-name-that-exceeds-width"),
+            "repo name should not fit in full at this width"
+        );
+        assert!(
+            text.find('…').unwrap() < text.find("▾").unwrap(),
+            "repo name should come before the arrow"
+        );
     }
 
     #[test]
-    fn render_filter_bar_popup_open_styling() {
+    fn render_secondary_header_popup_open_styling() {
         let mut state = make_state_with_groups(vec![]);
         state.repo_popup_open = true;
-        let (line, _) = render_filter_bar(&state, 28);
-        // Find the repo button span and check it has UNDERLINED modifier
+        let (line, _) = render_secondary_header(&state, 28);
         let last_span = line.spans.last().unwrap();
         assert!(
-            last_span.style.add_modifier.contains(Modifier::UNDERLINED),
-            "repo button should be underlined when popup is open"
+            !last_span.style.add_modifier.contains(Modifier::UNDERLINED),
+            "repo button should not be underlined when popup is open"
+        );
+        assert!(
+            !last_span.style.add_modifier.contains(Modifier::BOLD),
+            "repo button should not be bold when popup is open"
         );
     }
 }

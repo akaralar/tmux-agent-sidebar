@@ -278,7 +278,7 @@ pub struct AppState {
     pub repo_popup_open: bool,
     pub repo_popup_selected: usize,
     pub repo_popup_area: Option<ratatui::layout::Rect>,
-    pub repo_button_col: u16,
+    pub repo_button_col: Option<u16>,
     pub mascot_state: crate::ui::mascot::MascotState,
     /// Mascot animation X position (character offset from left of bottom panel).
     pub mascot_x: u16,
@@ -323,6 +323,9 @@ pub struct AppState {
     pub hyperlink_overlays: Vec<HyperlinkOverlay>,
     pub port_scan_initialized: bool,
     pub last_port_refresh: Instant,
+    /// Height of the bottom panel in lines. Loaded once at startup from
+    /// the `@sidebar_bottom_height` tmux option. A value of 0 hides the panel.
+    pub bottom_panel_height: u16,
 }
 
 /// Screen-positioned hyperlink overlay for OSC 8 terminal hyperlinks.
@@ -412,7 +415,7 @@ impl AppState {
             repo_popup_open: false,
             repo_popup_selected: 0,
             repo_popup_area: None,
-            repo_button_col: u16::MAX,
+            repo_button_col: None,
             mascot_state: crate::ui::mascot::MascotState::Idle,
             mascot_x: crate::ui::mascot::MASCOT_HOME_X,
             mascot_frame: 0,
@@ -437,6 +440,7 @@ impl AppState {
             hyperlink_overlays: vec![],
             port_scan_initialized: false,
             last_port_refresh: Instant::now(),
+            bottom_panel_height: crate::ui::BOTTOM_PANEL_HEIGHT,
         };
         reseed_mascot_idle_motion(&mut state);
         state
@@ -646,7 +650,10 @@ impl AppState {
         ];
         let col = col as usize;
         // Check if click is on repo button (right side)
-        if col >= self.repo_button_col as usize {
+        if self
+            .repo_button_col
+            .is_some_and(|repo_button_col| col >= repo_button_col as usize)
+        {
             self.toggle_repo_popup();
             return;
         }
