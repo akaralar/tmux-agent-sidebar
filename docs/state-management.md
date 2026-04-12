@@ -38,8 +38,8 @@ Pane options written to tmux:
 | `@pane_prompt` | UserPromptSubmit, Stop | Latest prompt or response text |
 | `@pane_prompt_source` | UserPromptSubmit, Stop | "user" or "response" |
 | `@pane_started_at` | UserPromptSubmit | Unix epoch when agent started |
-| `@pane_attention` | Notification, SessionStart | "notification" or "clear" |
-| `@pane_wait_reason` | StopFailure | Reason for waiting/error |
+| `@pane_attention` | SessionStart, Stop, StopFailure (clear); Notification, PermissionDenied, TeammateIdle (set) | "notification" or "clear" |
+| `@pane_wait_reason` | StopFailure, PermissionDenied, TeammateIdle | Reason for waiting/error (`permission_denied`, `teammate_idle:<name>`, or error text) |
 | `@pane_subagents` | SubagentStart/Stop | Comma-separated active subagent list |
 | `@pane_worktree_name` | SessionStart | Worktree name (if applicable) |
 | `@pane_worktree_branch` | SessionStart | Worktree branch (if applicable) |

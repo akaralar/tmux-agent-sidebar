@@ -25,8 +25,65 @@ A tmux sidebar that monitors all AI coding agents (Claude Code, Codex) across ev
 - **Task progress** — Displays task completion (e.g. `3/7`) synced from agent task lists
 - **Activity log** — Streams each tool invocation (Read, Edit, Bash, etc.) per agent in real time
 - **Git integration** — Shows branch name, ahead/behind counts, PR number (`gh`), and per-file diff stats
-- **Pane metadata** — Shows listening localhost ports and execution command info for each pane, alongside branch and elapsed time
-- **Permission mode** — Shows `auto` / `plan` / `!` badge so you know each agent's permission level
+- **Worktree-aware grouping** — Groups agents by the same repo, including worktrees, so related panes stay together
+- **Pane metadata** — Shows listening localhost ports and execution command info for each pane
+
+## Agent Pane
+
+<table>
+  <tr>
+    <td width="55%"><img src="assets/agent-pane.png" alt="Agent pane" /></td>
+    <td valign="top">
+      <ul>
+        <li><b>Status icon</b>
+          <ul>
+            <li><code>●</code> running, <code>◐</code> waiting, <code>○</code> idle, <code>✕</code> error</li>
+          </ul>
+        </li>
+        <li><b>Agent color</b>
+          <ul>
+            <li>Claude (terracotta), Codex (purple)</li>
+          </ul>
+        </li>
+        <li><b>Permission badge</b>
+          <ul>
+            <li><code>plan</code>, <code>edit</code>, <code>auto</code>, <code>!</code></li>
+          </ul>
+        </li>
+        <li><b>Session name</b>
+          <ul><li>tmux session the pane belongs to</li></ul>
+        </li>
+        <li><b>+ marker</b>
+          <ul><li>indicates a git worktree</li></ul>
+        </li>
+        <li><b>Branch</b>
+          <ul><li>current git branch for the pane's cwd</li></ul>
+        </li>
+        <li><b>Elapsed time</b>
+          <ul><li>time since the last user prompt</li></ul>
+        </li>
+        <li><b>Task progress</b>
+          <ul><li>e.g. <code>3/7</code>, synced from the agent's task list</li></ul>
+        </li>
+        <li><b>Subagent tree</b>
+          <ul><li>parent-child branches for spawned subagents</li></ul>
+        </li>
+        <li><b>Listening ports</b>
+          <ul><li>localhost ports the pane's process is listening on</li></ul>
+        </li>
+        <li><b>Response arrow (▶)</b>
+          <ul><li>latest agent response preview</li></ul>
+        </li>
+        <li><b>Prompt text</b>
+          <ul><li>latest user prompt</li></ul>
+        </li>
+        <li><b>Wait reason</b>
+          <ul><li>why the agent is waiting</li></ul>
+        </li>
+      </ul>
+    </td>
+  </tr>
+</table>
 
 ## Requirements
 
@@ -96,7 +153,13 @@ The sidebar receives status updates through agent hooks. Add the following hook 
 
 #### 2.1 Claude Code
 
-Add to your Claude Code hooks configuration (e.g. `~/.claude/settings.json`):
+Please create `~/.claude/settings.json` first.
+
+**Option A — Let an LLM wire it up (recommended).** Paste the following prompt into a Claude Code session:
+
+```
+Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar doctor claude (fall back to ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar if that path is missing). Add these hooks to ~/.claude/settings.json. If hooks already exist, merge them without making destructive changes.
+```
 
 <details>
 <summary>Claude Code hooks JSON</summary>
@@ -189,7 +252,13 @@ Add to your Claude Code hooks configuration (e.g. `~/.claude/settings.json`):
 
 #### 2.2 Codex
 
-Create or edit `~/.codex/hooks.json`:
+Please create `~/.codex/hooks.json` first.
+
+**Option A — Let an LLM wire it up (recommended).** Paste the following prompt into a Codex session:
+
+```
+Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar doctor codex (fall back to ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar if that path is missing). Add these hooks to ~/.codex/hooks.json. If hooks already exist, merge them without making destructive changes.
+```
 
 <details>
 <summary>Codex hooks JSON</summary>
