@@ -147,7 +147,7 @@ Create `~/.claude/settings.json` first.
 **Option A — Let an LLM wire it up (recommended).** Paste the following prompt into a Claude Code session:
 
 ```
-Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar doctor claude (fall back to ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar if that path is missing). Add these hooks to ~/.claude/settings.json. If hooks already exist, merge them without making destructive changes.
+Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar setup claude (fall back to ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar if that path is missing). Add these hooks to ~/.claude/settings.json. If hooks already exist, merge them without making destructive changes.
 ```
 
 <details>
@@ -345,7 +345,7 @@ Create `~/.codex/hooks.json` first.
 **Option A — Let an LLM wire it up (recommended).** Paste the following prompt into a Codex session:
 
 ```
-Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar doctor codex (fall back to ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar if that path is missing). Add these hooks to ~/.codex/hooks.json. If hooks already exist, merge them without making destructive changes.
+Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar setup codex (fall back to ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar if that path is missing). Add these hooks to ~/.codex/hooks.json. If hooks already exist, merge them without making destructive changes.
 ```
 
 <details>
