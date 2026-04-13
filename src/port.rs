@@ -10,6 +10,12 @@ pub struct PaneProcessSnapshot {
     pub live_agent_panes: HashSet<String>,
 }
 
+#[derive(Debug, Clone)]
+struct ProcessInfo {
+    comm: String,
+    args: String,
+}
+
 fn run_command(cmd: &str, args: &[&str]) -> Option<String> {
     let output = Command::new(cmd).args(args).output().ok()?;
     if output.status.success() {
@@ -33,9 +39,9 @@ fn parse_pane_pids(sessions: &[SessionInfo]) -> HashMap<String, u32> {
     out
 }
 
-fn parse_ps_processes(ps_output: &str) -> (HashMap<u32, Vec<u32>>, HashMap<u32, String>) {
+fn parse_ps_processes(ps_output: &str) -> (HashMap<u32, Vec<u32>>, HashMap<u32, ProcessInfo>) {
     let mut children_of: HashMap<u32, Vec<u32>> = HashMap::new();
-    let mut args_by_pid: HashMap<u32, String> = HashMap::new();
+    let mut info_by_pid: HashMap<u32, ProcessInfo> = HashMap::new();
     for line in ps_output.lines() {
         let mut parts = line.split_whitespace();
         let Some(pid_str) = parts.next() else {
@@ -50,10 +56,19 @@ fn parse_ps_processes(ps_output: &str) -> (HashMap<u32, Vec<u32>>, HashMap<u32, 
         let Ok(ppid) = ppid_str.parse::<u32>() else {
             continue;
         };
+        let Some(comm) = parts.next() else {
+            continue;
+        };
         children_of.entry(ppid).or_default().push(pid);
-        args_by_pid.insert(pid, parts.collect::<Vec<_>>().join(" "));
+        info_by_pid.insert(
+            pid,
+            ProcessInfo {
+                comm: comm.to_string(),
+                args: parts.collect::<Vec<_>>().join(" "),
+            },
+        );
     }
-    (children_of, args_by_pid)
+    (children_of, info_by_pid)
 }
 
 fn descendant_pids(seed_pids: &[u32], children_of: &HashMap<u32, Vec<u32>>) -> HashSet<u32> {
@@ -79,32 +94,30 @@ fn descendant_pids(seed_pids: &[u32], children_of: &HashMap<u32, Vec<u32>>) -> H
 fn process_tree_has_agent(
     seed_pids: &[u32],
     children_of: &HashMap<u32, Vec<u32>>,
-    args_by_pid: &HashMap<u32, String>,
+    info_by_pid: &HashMap<u32, ProcessInfo>,
     agent: &AgentType,
 ) -> bool {
     let agent_name = agent.label();
     let descendants = descendant_pids(seed_pids, children_of);
     descendants.into_iter().any(|pid| {
-        args_by_pid
+        info_by_pid
             .get(&pid)
-            .map(|args| process_matches_agent(args, agent_name))
+            .map(|info| process_matches_agent(info, agent_name))
             .unwrap_or(false)
     })
 }
 
-fn process_matches_agent(args: &str, agent_name: &str) -> bool {
-    let Some(command) = args.split_whitespace().next() else {
+fn process_matches_agent(info: &ProcessInfo, agent_name: &str) -> bool {
+    if info.comm == agent_name {
+        return true;
+    }
+
+    let Some(command) = info.args.split_whitespace().next() else {
         return false;
     };
     let command = command.trim_matches('"');
     let basename = command.rsplit('/').next().unwrap_or(command);
     basename == agent_name
-}
-
-fn process_basename(args: &str) -> Option<&str> {
-    let command = args.split_whitespace().next()?;
-    let command = command.trim_matches('"');
-    Some(command.rsplit('/').next().unwrap_or(command))
 }
 
 fn is_shell_command(basename: &str) -> bool {
@@ -117,23 +130,25 @@ fn is_shell_command(basename: &str) -> bool {
 fn best_command_for_pane(
     pane_pid: u32,
     children_of: &HashMap<u32, Vec<u32>>,
-    args_by_pid: &HashMap<u32, String>,
+    info_by_pid: &HashMap<u32, ProcessInfo>,
 ) -> Option<String> {
     let descendants = descendant_pids(&[pane_pid], children_of);
     let mut leaf_candidates: Vec<(usize, String)> = Vec::new();
     let mut fallback_candidates: Vec<(usize, String)> = Vec::new();
 
     for pid in descendants {
-        let Some(args) = args_by_pid.get(&pid) else {
+        let Some(info) = info_by_pid.get(&pid) else {
             continue;
         };
-        let Some(basename) = process_basename(args) else {
-            continue;
-        };
+        let basename = info.comm.as_str();
         if basename.is_empty() || is_shell_command(basename) {
             continue;
         }
-        let candidate = args.trim().to_string();
+        let candidate = if info.args.is_empty() {
+            info.comm.clone()
+        } else {
+            info.args.trim().to_string()
+        };
         let len = candidate.len();
         let is_leaf = children_of
             .get(&pid)
@@ -196,10 +211,10 @@ pub fn scan_session_process_snapshot(sessions: &[SessionInfo]) -> Option<PanePro
         return None;
     }
 
-    let Some(ps_output) = run_command("ps", &["-eo", "pid=,ppid=,args="]) else {
+    let Some(ps_output) = run_command("ps", &["-eo", "pid=,ppid=,comm=,args="]) else {
         return None;
     };
-    let (children_of, args_by_pid) = parse_ps_processes(&ps_output);
+    let (children_of, info_by_pid) = parse_ps_processes(&ps_output);
 
     let mut pid_to_panes: HashMap<u32, Vec<String>> = HashMap::new();
     let mut live_agent_panes: HashSet<String> = HashSet::new();
@@ -211,10 +226,10 @@ pub fn scan_session_process_snapshot(sessions: &[SessionInfo]) -> Option<PanePro
                     continue;
                 };
                 let descendant_set = descendant_pids(&[pane_pid], &children_of);
-                if process_tree_has_agent(&[pane_pid], &children_of, &args_by_pid, &pane.agent) {
+                if process_tree_has_agent(&[pane_pid], &children_of, &info_by_pid, &pane.agent) {
                     live_agent_panes.insert(pane.pane_id.clone());
                 }
-                if let Some(command) = best_command_for_pane(pane_pid, &children_of, &args_by_pid) {
+                if let Some(command) = best_command_for_pane(pane_pid, &children_of, &info_by_pid) {
                     command_by_pane.insert(pane.pane_id.clone(), command);
                 }
                 for pid in descendant_set {
@@ -287,13 +302,31 @@ mod tests {
     #[test]
     fn best_command_for_pane_prefers_leaf_non_shell_command() {
         let children = HashMap::from([(10, vec![11, 12]), (11, vec![]), (12, vec![])]);
-        let args = HashMap::from([
-            (10, "zsh".to_string()),
-            (11, "/usr/bin/node /tmp/server.js --port 3000".to_string()),
-            (12, "/usr/bin/git status".to_string()),
+        let info = HashMap::from([
+            (
+                10,
+                ProcessInfo {
+                    comm: "zsh".to_string(),
+                    args: "zsh".to_string(),
+                },
+            ),
+            (
+                11,
+                ProcessInfo {
+                    comm: "node".to_string(),
+                    args: "/usr/bin/node /tmp/server.js --port 3000".to_string(),
+                },
+            ),
+            (
+                12,
+                ProcessInfo {
+                    comm: "git".to_string(),
+                    args: "/usr/bin/git status".to_string(),
+                },
+            ),
         ]);
 
-        let command = best_command_for_pane(10, &children, &args).unwrap();
+        let command = best_command_for_pane(10, &children, &info).unwrap();
         assert_eq!(command, "/usr/bin/node /tmp/server.js --port 3000");
     }
 
@@ -311,34 +344,91 @@ mod tests {
     #[test]
     fn process_tree_has_agent_matches_descendant_process_name() {
         let children = HashMap::from([(1, vec![2, 3]), (2, vec![4])]);
-        let args = HashMap::from([
-            (1, "bash".to_string()),
-            (2, "node".to_string()),
-            (3, "/opt/homebrew/bin/claude --flag".to_string()),
-            (4, "sleep 1".to_string()),
+        let info = HashMap::from([
+            (
+                1,
+                ProcessInfo {
+                    comm: "bash".to_string(),
+                    args: "bash".to_string(),
+                },
+            ),
+            (
+                2,
+                ProcessInfo {
+                    comm: "node".to_string(),
+                    args: "node".to_string(),
+                },
+            ),
+            (
+                3,
+                ProcessInfo {
+                    comm: "claude".to_string(),
+                    args: "/opt/homebrew/bin/claude --flag".to_string(),
+                },
+            ),
+            (
+                4,
+                ProcessInfo {
+                    comm: "sleep".to_string(),
+                    args: "sleep 1".to_string(),
+                },
+            ),
         ]);
         assert!(process_tree_has_agent(
             &[1],
             &children,
-            &args,
+            &info,
             &AgentType::Claude
         ));
         assert!(!process_tree_has_agent(
             &[1],
             &children,
-            &args,
+            &info,
             &AgentType::Codex
         ));
     }
 
     #[test]
     fn process_matches_agent_requires_command_name_match() {
-        assert!(process_matches_agent("/opt/bin/claude --flag", "claude"));
         assert!(process_matches_agent(
-            "\"/usr/local/bin/codex\" run",
+            &ProcessInfo {
+                comm: "claude".to_string(),
+                args: "/opt/bin/claude --flag".to_string(),
+            },
+            "claude"
+        ));
+        assert!(process_matches_agent(
+            &ProcessInfo {
+                comm: "codex".to_string(),
+                args: "\"/usr/local/bin/codex\" run".to_string(),
+            },
             "codex"
         ));
-        assert!(!process_matches_agent("bash -lc codex", "codex"));
-        assert!(!process_matches_agent("grep claude", "claude"));
+        assert!(!process_matches_agent(
+            &ProcessInfo {
+                comm: "bash".to_string(),
+                args: "bash -lc codex".to_string(),
+            },
+            "codex"
+        ));
+        assert!(!process_matches_agent(
+            &ProcessInfo {
+                comm: "grep".to_string(),
+                args: "grep claude".to_string(),
+            },
+            "claude"
+        ));
+    }
+
+    #[test]
+    fn parse_ps_processes_preserves_spaced_args() {
+        let (children, info_by_pid) = parse_ps_processes(
+            "100 1 codex /Applications/Codex App/bin/codex --full-auto\n101 100 sh sh -c wrapper\n",
+        );
+
+        assert_eq!(children.get(&1).cloned(), Some(vec![100]));
+        let info = info_by_pid.get(&100).expect("process info");
+        assert_eq!(info.comm, "codex");
+        assert_eq!(info.args, "/Applications/Codex App/bin/codex --full-auto");
     }
 }

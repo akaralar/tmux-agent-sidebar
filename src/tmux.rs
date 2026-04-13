@@ -195,9 +195,13 @@ pub fn query_sessions() -> Vec<SessionInfo> {
 
     // 3. Single `ps` call for all Codex panes across all windows
     if !codex_pids.is_empty() {
-        if let Ok(output) = Command::new("ps").args(["-eo", "ppid,args"]).output() {
+        if let Ok(output) = Command::new("ps")
+            .args(["-eo", "pid=,ppid=,comm=,args="])
+            .output()
+        {
             if output.status.success() {
                 let ps_out = String::from_utf8_lossy(&output.stdout);
+                let (children_of, info_by_pid) = parse_ps_processes(&ps_out);
                 for (_session_name, windows) in &mut sessions_map {
                     for (window_id, window) in windows.iter_mut() {
                         let window_pids: Vec<(usize, u32)> = codex_pids
@@ -206,7 +210,12 @@ pub fn query_sessions() -> Vec<SessionInfo> {
                             .map(|(_, idx, pid)| (*idx, *pid))
                             .collect();
                         if !window_pids.is_empty() {
-                            apply_codex_permission_modes(&mut window.panes, &window_pids, &ps_out);
+                            apply_codex_permission_modes(
+                                &mut window.panes,
+                                &window_pids,
+                                &children_of,
+                                &info_by_pid,
+                            );
                         }
                     }
                 }
@@ -349,24 +358,96 @@ fn detect_codex_permission_mode(args: &str) -> PermissionMode {
     PermissionMode::Default
 }
 
+#[derive(Debug, Clone)]
+struct ProcessInfo {
+    comm: String,
+    args: String,
+}
+
+fn parse_ps_processes(
+    ps_out: &str,
+) -> (
+    std::collections::HashMap<u32, Vec<u32>>,
+    std::collections::HashMap<u32, ProcessInfo>,
+) {
+    let mut children_of: std::collections::HashMap<u32, Vec<u32>> =
+        std::collections::HashMap::new();
+    let mut info_by_pid: std::collections::HashMap<u32, ProcessInfo> =
+        std::collections::HashMap::new();
+
+    for line in ps_out.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(pid_str) = parts.next() else {
+            continue;
+        };
+        let Some(ppid_str) = parts.next() else {
+            continue;
+        };
+        let Ok(pid) = pid_str.parse::<u32>() else {
+            continue;
+        };
+        let Ok(ppid) = ppid_str.parse::<u32>() else {
+            continue;
+        };
+        let Some(comm) = parts.next() else {
+            continue;
+        };
+
+        children_of.entry(ppid).or_default().push(pid);
+        info_by_pid.insert(
+            pid,
+            ProcessInfo {
+                comm: comm.to_string(),
+                args: parts.collect::<Vec<_>>().join(" "),
+            },
+        );
+    }
+
+    (children_of, info_by_pid)
+}
+
+fn descendant_pids(
+    seed_pids: &[u32],
+    children_of: &std::collections::HashMap<u32, Vec<u32>>,
+) -> std::collections::HashSet<u32> {
+    let mut seen = std::collections::HashSet::new();
+    let mut queue: std::collections::VecDeque<u32> = seed_pids.iter().copied().collect();
+
+    while let Some(pid) = queue.pop_front() {
+        if !seen.insert(pid) {
+            continue;
+        }
+        if let Some(children) = children_of.get(&pid) {
+            for &child in children {
+                if !seen.contains(&child) {
+                    queue.push_back(child);
+                }
+            }
+        }
+    }
+
+    seen
+}
+
 fn apply_codex_permission_modes(
     panes: &mut [PaneInfo],
     pids_to_check: &[(usize, u32)],
-    ps_out: &str,
+    children_of: &std::collections::HashMap<u32, Vec<u32>>,
+    info_by_pid: &std::collections::HashMap<u32, ProcessInfo>,
 ) {
     for (idx, pid) in pids_to_check {
-        let pid_str = pid.to_string();
-        for line in ps_out.lines() {
-            let trimmed = line.trim();
-            if let Some((ppid_str, args)) = trimmed.split_once(char::is_whitespace) {
-                if ppid_str.trim() != pid_str {
-                    continue;
-                }
-                if let Some(pane) = panes.get_mut(*idx) {
-                    pane.permission_mode = detect_codex_permission_mode(args);
-                    if pane.permission_mode != PermissionMode::Default {
-                        break;
-                    }
+        let descendants = descendant_pids(&[*pid], children_of);
+        for descendant in descendants {
+            let Some(info) = info_by_pid.get(&descendant) else {
+                continue;
+            };
+            if info.comm != CODEX_AGENT {
+                continue;
+            }
+            if let Some(pane) = panes.get_mut(*idx) {
+                pane.permission_mode = detect_codex_permission_mode(&info.args);
+                if pane.permission_mode != PermissionMode::Default {
+                    break;
                 }
             }
         }
@@ -378,8 +459,13 @@ fn sanitize_prompt(raw: &str) -> String {
     if raw.is_empty() {
         return String::new();
     }
-    // Filter system-injected messages (e.g. <task-notification>, <system-reminder>)
-    if raw.contains('<') && raw.contains('>') {
+    // Filter known system-injected messages. Avoid the old broad angle-bracket
+    // check so legitimate prompts containing comparisons or code snippets
+    // still render.
+    if raw.contains("<task-notification>")
+        || raw.contains("<system-reminder>")
+        || raw.contains("<task-status>")
+    {
         return String::new();
     }
     if raw.chars().count() > 200 {
@@ -727,10 +813,53 @@ mod tests {
             session_name: String::new(),
         }];
         let pids = vec![(0, 101)];
-        let ps_out = " 101 /bin/codex --full-auto\n";
+        let ps_out = "101 1 bash /bin/bash\n102 101 codex /bin/codex --full-auto\n";
+        let (children_of, info_by_pid) = parse_ps_processes(ps_out);
 
-        apply_codex_permission_modes(&mut panes, &pids, ps_out);
+        apply_codex_permission_modes(&mut panes, &pids, &children_of, &info_by_pid);
         assert_eq!(panes[0].permission_mode, PermissionMode::Auto);
+    }
+
+    #[test]
+    fn apply_codex_permission_modes_follows_shell_wrappers() {
+        let mut panes = vec![PaneInfo {
+            pane_id: "%1".into(),
+            pane_active: false,
+            status: PaneStatus::Idle,
+            attention: false,
+            agent: AgentType::Codex,
+            path: "/tmp".into(),
+            current_command: String::new(),
+            prompt: String::new(),
+            prompt_is_response: false,
+            started_at: None,
+            wait_reason: String::new(),
+            permission_mode: PermissionMode::Default,
+            subagents: vec![],
+            pane_pid: None,
+            worktree_name: String::new(),
+            worktree_branch: String::new(),
+            session_id: None,
+            session_name: String::new(),
+        }];
+        let pids = vec![(0, 101)];
+        let ps_out = "101 1 bash /bin/bash\n102 101 sh -c wrapper\n103 102 codex /usr/local/bin/codex --yolo\n";
+        let (children_of, info_by_pid) = parse_ps_processes(ps_out);
+
+        apply_codex_permission_modes(&mut panes, &pids, &children_of, &info_by_pid);
+        assert_eq!(panes[0].permission_mode, PermissionMode::BypassPermissions);
+    }
+
+    #[test]
+    fn parse_ps_processes_preserves_spaced_args() {
+        let (children_of, info_by_pid) = parse_ps_processes(
+            "100 1 codex /Applications/Codex App/bin/codex --full-auto\n101 100 sh sh -c wrapper\n",
+        );
+
+        assert_eq!(children_of.get(&1).cloned(), Some(vec![100]));
+        let info = info_by_pid.get(&100).expect("process info");
+        assert_eq!(info.comm, "codex");
+        assert_eq!(info.args, "/Applications/Codex App/bin/codex --full-auto");
     }
 
     // ─── sanitize_prompt tests ──────────────────────────────────────
@@ -750,6 +879,11 @@ mod tests {
     #[test]
     fn sanitize_prompt_passes_normal_text() {
         assert_eq!(sanitize_prompt("fix the bug"), "fix the bug");
+    }
+
+    #[test]
+    fn sanitize_prompt_keeps_legitimate_angle_brackets() {
+        assert_eq!(sanitize_prompt("1 < 2 and 3 > 1"), "1 < 2 and 3 > 1");
     }
 
     #[test]
