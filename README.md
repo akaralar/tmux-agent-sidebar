@@ -74,14 +74,14 @@
 
 - tmux 3.0+
 - [TPM](https://github.com/tmux-plugins/tpm) (recommended, for plugin installation)
-- [Rust](https://rustup.rs/) (only if building from source)
 - [GitHub CLI](https://cli.github.com/) (optional, for displaying PR numbers in the Git tab)
+- [Rust](https://rustup.rs/) (only if building from source)
 
 ## Setting Up
 
 ### 1. Installation
 
-#### Installation with TPM
+**Option A: Installation with TPM (recommended).**
 
 Add the plugin to your `tmux.conf`:
 
@@ -94,7 +94,8 @@ Press `prefix + I` to install. On the first run, an install wizard prompts you t
 
 To update later, press `prefix + U` in TPM's plugin list and select `tmux-agent-sidebar`. The install wizard runs again if the bundled binary has changed.
 
-#### Manual
+<details>
+<summary>Option B: Manual</summary>
 
 1. Clone the repository:
 
@@ -110,27 +111,16 @@ run-shell ~/.tmux/plugins/tmux-agent-sidebar/tmux-agent-sidebar.tmux
 
 3. Install the binary using one of the following methods:
 
-   <details>
-   <summary>Download pre-built binary</summary>
+```sh
+# macOS (Apple Silicon)
+curl -fSL https://github.com/hiroppy/tmux-agent-sidebar/releases/latest/download/tmux-agent-sidebar-darwin-aarch64 \
+  -o ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
+chmod +x ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
+cd ~/.tmux/plugins/tmux-agent-sidebar
+cargo build --release
+```
 
-   ```sh
-   # macOS (Apple Silicon)
-   curl -fSL https://github.com/hiroppy/tmux-agent-sidebar/releases/latest/download/tmux-agent-sidebar-darwin-aarch64 \
-     -o ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
-   chmod +x ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
-   ```
-
-   </details>
-
-   <details>
-   <summary>Build from source (requires Rust)</summary>
-
-   ```sh
-   cd ~/.tmux/plugins/tmux-agent-sidebar
-   cargo build --release
-   ```
-
-   </details>
+</details>
 
 ### 2. Reload tmux config
 
@@ -142,38 +132,25 @@ The sidebar receives status updates through agent hooks. Add the following hook 
 
 #### 3.1 Claude Code
 
-The repository ships as a Claude Code plugin, so the hooks register themselves — you do **not** need to edit `~/.claude/settings.json`.
+The repository ships as a Claude Code plugin, so the hooks register themselves.
 
 Inside Claude Code, register the marketplace and install the plugin:
 
-```text
-/plugin marketplace add hiroppy/tmux-agent-sidebar
-/plugin install tmux-agent-sidebar@hiroppy
-```
-
-For a local checkout (development), point the marketplace at your repo path instead:
-
-```text
-/plugin marketplace add /path/to/tmux-agent-sidebar
+```sh
+/plugin marketplace add ~/.tmux/plugins/tmux-agent-sidebar
 /plugin install tmux-agent-sidebar@hiroppy
 ```
 
 Either form wires up the Claude Code hooks. Run `/reload-plugins` (or restart Claude Code) to activate them.
 
-If you want to inspect exactly which hooks the plugin registers (for example, to audit them before running `/plugin install`), run `tmux-agent-sidebar setup claude` — it prints the full hook list as JSON.
-
-> **Migrating from manual hooks?** If you previously pasted the `bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude ...` lines into `~/.claude/settings.json`, remove them now — leaving them in place causes every hook to fire twice. Opening the sidebar's notices popup on a Claude pane and clicking `[prompt]` will copy a migration recipe an LLM can apply for you.
-
 <details>
-<summary>Plugin not an option? Manual <code>~/.claude/settings.json</code> setup</summary>
-
-If you cannot use the plugin (older Claude Code, locked-down environment, etc.), let an LLM wire it up by pasting this prompt into a Claude Code session:
+<summary>
+If your environment can' use plugin, you will be able to register hooks to your settings.json using below prompt.
+</summary>
 
 ```
 Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar setup claude (fall back to ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar if that path is missing). Add these hooks to ~/.claude/settings.json. If hooks already exist, merge them without making destructive changes.
 ```
-
-Or copy-paste the JSON output of `tmux-agent-sidebar setup claude` directly into `~/.claude/settings.json`.
 
 </details>
 
@@ -181,7 +158,7 @@ Or copy-paste the JSON output of `tmux-agent-sidebar setup claude` directly into
 
 Create `~/.codex/hooks.json` first.
 
-**Option A — Copy from the sidebar (recommended).**
+**Option A: Copy from the sidebar (recommended).**
 
 1. Open a Codex pane in tmux and focus it.
 2. Press `prefix + e` to toggle the sidebar. A yellow `ⓘ` badge appears in the top row of the sidebar when required hooks are missing.
@@ -189,7 +166,7 @@ Create `~/.codex/hooks.json` first.
 4. Switch back to the Codex pane and paste. Codex will run `tmux-agent-sidebar setup codex` and merge the hooks into `~/.codex/hooks.json`.
 
 <details>
-<summary>Option B — Paste this JSON into <code>~/.codex/hooks.json</code></summary>
+<summary>Option B: Paste this JSON into <code>~/.codex/hooks.json</code></summary>
 
 ```json
 {
@@ -354,5 +331,5 @@ This is useful for integrating agent status into your tmux status bar, custom sc
 ## Uninstalling
 
 1. Remove the `set -g @plugin` (or `run-shell`) line from your `tmux.conf`
-2. Remove hook entries from your Claude Code / Codex settings
+2. Remove hook entries or plugins from your Claude Code / Codex settings
 3. Remove the plugin directory: `rm -rf ~/.tmux/plugins/tmux-agent-sidebar`
