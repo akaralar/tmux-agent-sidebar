@@ -305,11 +305,11 @@ fn prompt_rows(pane: &crate::tmux::PaneInfo, ctx: &RowCtx) -> Vec<Line<'static>>
     for (li, wl) in wrapped.iter().enumerate() {
         if is_response && li == 0 {
             let arrow_color = theme.response_arrow;
-            let text_dw = 2 + display_width(wl); // "▶ " width
+            let text_dw = 2 + display_width(wl); // "▷ " width
             out.push(ctx.row_line(
                 vec![
                     Span::styled(
-                        "▶ ",
+                        "▷ ",
                         ctx.apply_bg(
                             Style::default()
                                 .fg(arrow_color)
@@ -815,7 +815,7 @@ mod tests {
 
         assert!(lines.len() >= 2);
         let response_line = line_text(&lines[1]);
-        assert!(response_line.contains("▶"));
+        assert!(response_line.contains("▷"));
         assert!(response_line.contains("Task completed successfully"));
     }
 
@@ -844,7 +844,7 @@ mod tests {
 
         assert!(lines.len() >= 2);
         let first = line_text(&lines[1]);
-        assert!(first.contains("▶"));
+        assert!(first.contains("▷"));
         // char-wrap must not trim inter-word spaces like word-wrap does
         let second = line_text(&lines[2]);
         assert!(!second.starts_with("│  ghijk"));
@@ -870,7 +870,7 @@ mod tests {
 
         assert!(lines.len() >= 2);
         let prompt_line = line_text(&lines[1]);
-        assert!(!prompt_line.contains("▶"));
+        assert!(!prompt_line.contains("▷"));
         assert!(prompt_line.contains("fix the bug"));
     }
 

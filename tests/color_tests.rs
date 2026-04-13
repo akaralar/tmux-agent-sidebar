@@ -372,10 +372,10 @@ fn test_response_arrow_uses_response_arrow_color() {
     state.sidebar_focused = false;
 
     let styled = render_to_styled_string(&mut state, 40, 27);
-    // Response arrow (▶) uses theme.response_arrow (74) and bold.
+    // Response arrow (▷) uses theme.response_arrow (81) and bold.
     assert!(
-        styled.contains("fg:74"),
-        "Response arrow should use response_arrow color (74)"
+        styled.contains("fg:81"),
+        "Response arrow should use response_arrow color (81)"
     );
     assert!(styled.contains("bold"), "Response arrow should be bold");
     // The response text itself uses text_active (255) for the focused pane
@@ -385,7 +385,7 @@ fn test_response_arrow_uses_response_arrow_color() {
     );
 
     let plain = render_to_string(&mut state, 40, 27);
-    assert!(plain.contains("▶"), "Response should show ▶ arrow");
+    assert!(plain.contains("▷"), "Response should show ▷ arrow");
 }
 
 // test_commit_hash_uses_commit_hash_color was removed because

@@ -913,7 +913,7 @@ fn snapshot_response_japanese_ui() {
     ⓘ                          — ▾
     project
     ┃ ○ claude
-      ▶ 修 正 が 完 了 し ま し た 。 テ ス ト
+      ▷ 修 正 が 完 了 し ま し た 。 テ ス ト
         も 全 て 通 っ て い ま す 。
     ╭ Activity │ Git ────────────╮
     │       No activity yet      │
@@ -1062,7 +1062,7 @@ fn snapshot_response_with_branch_ui() {
     project
     ┃ ○ claude
     ┃   feature/ui-v2
-      ▶ Done. All tests are green.
+      ▷ Done. All tests are green.
     ╭ Activity │ Git ────────────────╮
     │         No activity yet        │
     ╰────────────────────────────────╯

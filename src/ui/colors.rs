@@ -78,7 +78,7 @@ impl Default for ColorTheme {
             pr_link: Color::Indexed(117),
             section_title: Color::Indexed(109),
             activity_timestamp: Color::Indexed(109),
-            response_arrow: Color::Indexed(74),
+            response_arrow: Color::Indexed(81),
         }
     }
 }

@@ -56,7 +56,7 @@
         <li><b>Listening ports</b>
           <ul><li>localhost ports the pane's process is listening on</li></ul>
         </li>
-        <li><b>Response arrow (▶)</b>
+        <li><b>Response arrow (▷)</b>
           <ul><li>preview of the latest agent response</li></ul>
         </li>
         <li><b>Prompt text</b>
@@ -427,7 +427,7 @@ Create `~/.codex/hooks.json` first.
 |---|---|---|---|
 | Status tracking (running / idle / error) | :white_check_mark: | :white_check_mark: | Driven by `SessionStart` / `UserPromptSubmit` / `Stop` |
 | Prompt text display | :white_check_mark: | :white_check_mark: | Saved from `UserPromptSubmit` |
-| Response text display (`▶ ...`) | :white_check_mark: | :white_check_mark: | Populated from `Stop` payload |
+| Response text display (`▷ ...`) | :white_check_mark: | :white_check_mark: | Populated from `Stop` payload |
 | Waiting status + wait reason | :white_check_mark: | :x: | Populated from `Notification`, `PermissionDenied`, and `TeammateIdle` (all Claude-only) |
 | API failure reason display | :white_check_mark: | :x: | `StopFailure` is wired only for Claude |
 | Permission badge | :white_check_mark: (`plan` / `edit` / `auto` / `!`) | :white_check_mark: (`auto` / `!` only) | Codex badges are inferred from process arguments |
@@ -484,7 +484,7 @@ set -g @sidebar_color_file_change 221     # file change stats (default: 221 yell
 set -g @sidebar_color_pr_link 117         # PR link / number (default: 117 blue)
 set -g @sidebar_color_section_title 109   # section titles (default: 109 teal)
 set -g @sidebar_color_activity_timestamp 109 # activity timestamps (default: 109 teal)
-set -g @sidebar_color_response_arrow 74   # response arrow (default: 74 cyan)
+set -g @sidebar_color_response_arrow 81   # response arrow (default: 81 bright cyan)
 
 # Icons (Unicode glyphs; defaults keep the current look)
 set -g @sidebar_icon_all ≡               # status filter bar "all" icon
