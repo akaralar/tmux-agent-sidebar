@@ -333,7 +333,14 @@ This is useful for integrating agent status into your tmux status bar, custom sc
 
 ## Development
 
-When `~/.tmux/plugins/tmux-agent-sidebar` is a symlink to this repository, running the following replaces the binary that your local tmux sidebar loads. Toggle the sidebar off → on to pick up the new build.
+Symlink the plugin directory to your working copy so that builds are picked up without copying artifacts. If TPM already cloned the plugin, remove it first:
+
+```sh
+rm -rf ~/.tmux/plugins/tmux-agent-sidebar
+ln -s <path-to-this-repo> ~/.tmux/plugins/tmux-agent-sidebar
+```
+
+Then build — the binary that your local tmux sidebar loads is replaced in place. Toggle the sidebar off → on to pick up the new build.
 
 ```sh
 cargo build --release
