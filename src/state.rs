@@ -326,6 +326,9 @@ pub struct AppState {
     /// Height of the bottom panel in lines. Loaded once at startup from
     /// the `@sidebar_bottom_height` tmux option. A value of 0 hides the panel.
     pub bottom_panel_height: u16,
+    /// Whether the mascot animation is drawn and ticked. Loaded once at startup
+    /// from the `@sidebar_mascot` tmux option. Defaults to `false`.
+    pub mascot_enabled: bool,
 }
 
 /// Screen-positioned hyperlink overlay for OSC 8 terminal hyperlinks.
@@ -377,10 +380,7 @@ fn reseed_mascot_working_paper_motion(state: &mut AppState) {
 fn reseed_mascot_walk_bounce(state: &mut AppState) {
     const A: usize = 1664525;
     const C: usize = 1013904223;
-    state.mascot_walk_seed = state
-        .mascot_walk_seed
-        .wrapping_mul(A)
-        .wrapping_add(C);
+    state.mascot_walk_seed = state.mascot_walk_seed.wrapping_mul(A).wrapping_add(C);
     let delay = 3 + (state.mascot_walk_seed % 5);
     state.mascot_walk_bounce_next_tick = state.mascot_walk_tick + delay;
 }
@@ -441,6 +441,7 @@ impl AppState {
             port_scan_initialized: false,
             last_port_refresh: Instant::now(),
             bottom_panel_height: crate::ui::BOTTOM_PANEL_HEIGHT,
+            mascot_enabled: false,
         };
         reseed_mascot_idle_motion(&mut state);
         state
@@ -805,7 +806,8 @@ impl AppState {
                     self.mascot_walk_bounce_lift_until = 0;
                     self.mascot_x = self.mascot_x.saturating_add(1);
                 } else {
-                    self.mascot_bob_timer = (self.mascot_bob_timer + 1) % crate::ui::mascot::BOB_INTERVAL;
+                    self.mascot_bob_timer =
+                        (self.mascot_bob_timer + 1) % crate::ui::mascot::BOB_INTERVAL;
                     if self.mascot_bob_timer == 0 {
                         reseed_mascot_idle_motion(self);
                     }
@@ -852,7 +854,8 @@ impl AppState {
                 self.mascot_working_paper_timer = self.mascot_working_paper_timer.saturating_add(1);
                 if self.mascot_working_paper_timer >= self.mascot_working_paper_next_lift_tick {
                     self.mascot_working_paper_lift_until = self.mascot_working_paper_timer + 2;
-                    self.mascot_working_paper_x_offset = (self.mascot_working_paper_seed & 1) as u16;
+                    self.mascot_working_paper_x_offset =
+                        (self.mascot_working_paper_seed & 1) as u16;
                     reseed_mascot_working_paper_motion(self);
                 }
                 self.mascot_working_frame_tick = self.mascot_working_frame_tick.saturating_add(1);
@@ -887,7 +890,9 @@ impl AppState {
                     self.mascot_walk_bounce_lift_until = 0;
                     return;
                 }
-                let remaining = self.mascot_x.saturating_sub(crate::ui::mascot::MASCOT_HOME_X);
+                let remaining = self
+                    .mascot_x
+                    .saturating_sub(crate::ui::mascot::MASCOT_HOME_X);
                 let step = walk_step(remaining);
                 self.mascot_x = self.mascot_x.saturating_sub(step);
                 self.mascot_walk_tick = self.mascot_walk_tick.saturating_add(1);
@@ -2511,7 +2516,10 @@ mod tests {
     #[test]
     fn mascot_state_defaults() {
         let state = AppState::new("%0".into());
-        assert!(matches!(state.mascot_state, crate::ui::mascot::MascotState::Idle));
+        assert!(matches!(
+            state.mascot_state,
+            crate::ui::mascot::MascotState::Idle
+        ));
         assert_eq!(state.mascot_x, crate::ui::mascot::MASCOT_HOME_X);
         assert_eq!(state.mascot_frame, 0);
         assert_eq!(state.mascot_working_frame_tick, 0);
@@ -2569,7 +2577,10 @@ mod tests {
         state.mascot_state = crate::ui::mascot::MascotState::WalkRight;
         state.mascot_x = stop_x - 1;
         state.tick_mascot(panel_width);
-        assert!(matches!(state.mascot_state, crate::ui::mascot::MascotState::Working));
+        assert!(matches!(
+            state.mascot_state,
+            crate::ui::mascot::MascotState::Working
+        ));
     }
 
     #[test]
@@ -2685,7 +2696,10 @@ mod tests {
         state.tick_mascot(60);
         assert_eq!(state.mascot_x, crate::ui::mascot::MASCOT_HOME_X);
         state.tick_mascot(60);
-        assert!(matches!(state.mascot_state, crate::ui::mascot::MascotState::Idle));
+        assert!(matches!(
+            state.mascot_state,
+            crate::ui::mascot::MascotState::Idle
+        ));
     }
 
     #[test]

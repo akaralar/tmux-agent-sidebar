@@ -95,6 +95,7 @@ fn run_app(
     state.theme = tmux_agent_sidebar::ui::colors::ColorTheme::from_tmux();
     state.icons = tmux_agent_sidebar::ui::icons::StatusIcons::from_tmux();
     state.bottom_panel_height = tmux_agent_sidebar::ui::bottom_panel_height_from_tmux();
+    state.mascot_enabled = tmux_agent_sidebar::ui::mascot_enabled_from_tmux();
     state.global.load_from_tmux();
     state.refresh();
     let mut window_inactive_count: u32 = 0;
@@ -265,8 +266,10 @@ fn run_app(
 
         if last_spinner.elapsed() >= spinner_interval {
             state.spinner_frame = (state.spinner_frame + 1) % SPINNER_PULSE.len();
-            let term_width = terminal.size().map(|s| s.width).unwrap_or(60);
-            state.tick_mascot(term_width);
+            if state.mascot_enabled {
+                let term_width = terminal.size().map(|s| s.width).unwrap_or(60);
+                state.tick_mascot(term_width);
+            }
             last_spinner = std::time::Instant::now();
         }
 

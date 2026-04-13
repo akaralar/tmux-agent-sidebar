@@ -394,9 +394,7 @@ fn desk_sprite() -> Vec<Line<'static>> {
 
 /// Chair: full block.
 fn chair_sprite() -> Vec<Line<'static>> {
-    vec![
-        Line::from(Span::styled("██", Style::new().fg(CHAIR_COLOR))),
-    ]
+    vec![Line::from(Span::styled("██", Style::new().fg(CHAIR_COLOR)))]
 }
 
 const PAPER_COLOR: Color = Color::Indexed(255); // white
@@ -508,7 +506,10 @@ fn walking_sprite_frame(state: &crate::state::AppState) -> usize {
 }
 
 fn walking_vertical_lift(state: &crate::state::AppState) -> u16 {
-    let is_walking = matches!(state.mascot_state, MascotState::WalkRight | MascotState::WalkLeft);
+    let is_walking = matches!(
+        state.mascot_state,
+        MascotState::WalkRight | MascotState::WalkLeft
+    );
     let phase = (state.mascot_walk_tick + (state.mascot_walk_seed % 6)) % 6;
     if is_walking && state.mascot_walk_tick >= 4 && phase < 2 {
         2
@@ -544,23 +545,19 @@ pub fn draw_mascot(frame: &mut Frame, state: &AppState, bottom_area: Rect, runni
     // --- Draw mascot first (so desk/chair render on top if overlapping) ---
     let sprite_lines = match state.mascot_state {
         MascotState::Idle => idle_sprite(idle_motion(state)),
-        MascotState::WalkRight => {
-            match walking_sprite_frame(state) {
-                1 => walking_right_1(),
-                2 => walking_right_2(),
-                3 => walking_right_3(),
-                _ => walking_right_1(),
-            }
-        }
+        MascotState::WalkRight => match walking_sprite_frame(state) {
+            1 => walking_right_1(),
+            2 => walking_right_2(),
+            3 => walking_right_3(),
+            _ => walking_right_1(),
+        },
         MascotState::Working => working_sprite(state),
-        MascotState::WalkLeft => {
-            match walking_sprite_frame(state) {
-                1 => walking_left_1(),
-                2 => walking_left_2(),
-                3 => walking_left_3(),
-                _ => walking_left_1(),
-            }
-        }
+        MascotState::WalkLeft => match walking_sprite_frame(state) {
+            1 => walking_left_1(),
+            2 => walking_left_2(),
+            3 => walking_left_3(),
+            _ => walking_left_1(),
+        },
     };
     let sprite_lines = recolor_sprite(
         sprite_lines,
@@ -601,9 +598,7 @@ pub fn draw_mascot(frame: &mut Frame, state: &AppState, bottom_area: Rect, runni
     if running_count > 0 {
         let papers = paper_sprite(running_count);
         if !papers.is_empty() {
-            let paper_y = desk_y.saturating_sub(
-                papers.len() as u16 + working_paper_lift(state),
-            );
+            let paper_y = desk_y.saturating_sub(papers.len() as u16 + working_paper_lift(state));
             let paper_x = desk_x
                 + 1
                 + if working_paper_lift(state) == 1 {
@@ -645,7 +640,10 @@ mod tests {
         lines
             .iter()
             .map(|line| {
-                line.spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -656,100 +654,61 @@ mod tests {
     #[test]
     fn sprite_sitting() {
         let s = sprite_to_string(&sitting_sprite());
-        assert_eq!(s, [
-            " ▄ ▄",
-            "▄▀▀▀▄",
-            " ▀ ▀",
-        ].join("\n"));
+        assert_eq!(s, [" ▄ ▄", "▄▀▀▀▄", " ▀ ▀",].join("\n"));
     }
 
     #[test]
     fn sprite_walking_right_frame1() {
         let s = sprite_to_string(&walking_right_1());
-        assert_eq!(s, [
-            " ▄ ▄",
-            "▄▀▀▀▄",
-            "▖ ▗  ",
-        ].join("\n"));
+        assert_eq!(s, [" ▄ ▄", "▄▀▀▀▄", "▖ ▗  ",].join("\n"));
     }
 
     #[test]
     fn sprite_walking_right_frame2() {
         let s = sprite_to_string(&walking_right_2());
-        assert_eq!(s, [
-            " ▄ ▄",
-            "▄▀▀▀▄",
-            "▗ ▖  ",
-        ].join("\n"));
+        assert_eq!(s, [" ▄ ▄", "▄▀▀▀▄", "▗ ▖  ",].join("\n"));
     }
 
     #[test]
     fn sprite_working_frame1() {
         let s = sprite_to_string(&working_sprite_1());
-        assert_eq!(s, [
-            " ▄▄",
-            " █▀╴",
-            " ▀▀",
-        ].join("\n"));
+        assert_eq!(s, [" ▄▄", " █▀╴", " ▀▀",].join("\n"));
     }
 
     #[test]
     fn sprite_working_frame2() {
         let s = sprite_to_string(&working_sprite_2());
-        assert_eq!(s, [
-            " ▄▄",
-            " █▀─",
-            " ▀▀",
-        ].join("\n"));
+        assert_eq!(s, [" ▄▄", " █▀─", " ▀▀",].join("\n"));
     }
 
     #[test]
     fn sprite_working_frame3() {
         let s = sprite_to_string(&working_sprite_3());
-        assert_eq!(s, [
-            " ▄▄",
-            " █▀╶",
-            " ▀▀",
-        ].join("\n"));
+        assert_eq!(s, [" ▄▄", " █▀╶", " ▀▀",].join("\n"));
     }
 
     #[test]
     fn sprite_working_lifted_frame1() {
         let s = sprite_to_string(&working_sprite_lifted_1());
-        assert_eq!(s, [
-            " ▄▄",
-            " █▀╷",
-            " ▀▀",
-        ].join("\n"));
+        assert_eq!(s, [" ▄▄", " █▀╷", " ▀▀",].join("\n"));
     }
 
     #[test]
     fn sprite_working_lifted_frame2() {
         let s = sprite_to_string(&working_sprite_lifted_2());
-        assert_eq!(s, [
-            " ▄▄",
-            " █▀─",
-            " ▀▀",
-        ].join("\n"));
+        assert_eq!(s, [" ▄▄", " █▀─", " ▀▀",].join("\n"));
     }
 
     #[test]
     fn sprite_working_lifted_frame3() {
         let s = sprite_to_string(&working_sprite_lifted_3());
-        assert_eq!(s, [
-            " ▄▄",
-            " █▀╶",
-            " ▀▀",
-        ].join("\n"));
+        assert_eq!(s, [" ▄▄", " █▀╶", " ▀▀",].join("\n"));
     }
 
     #[test]
     fn sprite_desk() {
         let s = sprite_to_string(&desk_sprite());
-        assert_eq!(s, [
-            "████",
-            "█  █",
-        ].join("\n"));
+        assert_eq!(s, ["████", "█  █",].join("\n"));
     }
 
     #[test]
@@ -771,10 +730,7 @@ mod tests {
     #[test]
     fn sprite_paper_2() {
         let s = sprite_to_string(&paper_sprite(2));
-        assert_eq!(s, [
-            "▐█▌",
-            "▐█▌",
-        ].join("\n"));
+        assert_eq!(s, ["▐█▌", "▐█▌",].join("\n"));
     }
 
     #[test]
@@ -813,29 +769,33 @@ mod tests {
     #[test]
     fn sprite_sitting_blink() {
         let s = sprite_to_string(&sitting_sprite_blink());
-        assert_eq!(s, [
-            " ▄ ▄",
-            "▄─▀─▄",
-            " ▀ ▀",
-        ].join("\n"));
+        assert_eq!(s, [" ▄ ▄", "▄─▀─▄", " ▀ ▀",].join("\n"));
     }
 
     #[test]
     fn sprite_sitting_wave() {
         let s = sprite_to_string(&sitting_sprite_wave());
-        assert_eq!(s, [
-            " ▄▘ ▄",
-            "▄▀▀▀▄",
-            " ▀ ▀",
-        ].join("\n"));
+        assert_eq!(s, [" ▄▘ ▄", "▄▀▀▀▄", " ▀ ▀",].join("\n"));
     }
 
     #[test]
     fn idle_sprite_cycles_through_idle_poses() {
-        assert_eq!(sprite_to_string(&idle_sprite(IdleMotion::Rest)), sprite_to_string(&sitting_sprite()));
-        assert_eq!(sprite_to_string(&idle_sprite(IdleMotion::Jump)), sprite_to_string(&sitting_sprite()));
-        assert_eq!(sprite_to_string(&idle_sprite(IdleMotion::Blink)), sprite_to_string(&sitting_sprite_blink()));
-        assert_eq!(sprite_to_string(&idle_sprite(IdleMotion::Wave)), sprite_to_string(&sitting_sprite_wave()));
+        assert_eq!(
+            sprite_to_string(&idle_sprite(IdleMotion::Rest)),
+            sprite_to_string(&sitting_sprite())
+        );
+        assert_eq!(
+            sprite_to_string(&idle_sprite(IdleMotion::Jump)),
+            sprite_to_string(&sitting_sprite())
+        );
+        assert_eq!(
+            sprite_to_string(&idle_sprite(IdleMotion::Blink)),
+            sprite_to_string(&sitting_sprite_blink())
+        );
+        assert_eq!(
+            sprite_to_string(&idle_sprite(IdleMotion::Wave)),
+            sprite_to_string(&sitting_sprite_wave())
+        );
     }
 
     #[test]
@@ -881,7 +841,12 @@ mod tests {
     }
 
     /// Helper: render draw_mascot into a buffer and return as string for visual inspection.
-    fn render_mascot_scene(state: &AppState, running_count: usize, width: u16, height: u16) -> String {
+    fn render_mascot_scene(
+        state: &AppState,
+        running_count: usize,
+        width: u16,
+        height: u16,
+    ) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         let bottom_y = height.saturating_sub(10);
@@ -919,7 +884,8 @@ mod tests {
             "  ▄ ▄",
             " ▄▀▀▀▄                             ████",
             "  ▀ ▀                           ██ █  █",
-        ].join("\n");
+        ]
+        .join("\n");
         assert_eq!(output, expected);
     }
 
@@ -929,8 +895,7 @@ mod tests {
         state.mascot_state = MascotState::Working;
         let panel_width = 40u16;
         let working_width = CHAIR_WIDTH + 2;
-        let stop_x = panel_width
-            .saturating_sub(DESK_OFFSET + DESK_WIDTH + working_width);
+        let stop_x = panel_width.saturating_sub(DESK_OFFSET + DESK_WIDTH + working_width);
         state.mascot_x = stop_x;
         state.mascot_frame = 1;
         let output = render_mascot_scene(&state, 2, panel_width, 14);
@@ -939,7 +904,8 @@ mod tests {
             "                                 █▀╴▐█▌",
             "                                 ▀▀████",
             "                                ██ █  █",
-        ].join("\n");
+        ]
+        .join("\n");
         assert_eq!(output, expected);
     }
 
@@ -949,8 +915,7 @@ mod tests {
         state.mascot_state = MascotState::Working;
         let panel_width = 40u16;
         let working_width = CHAIR_WIDTH + 2;
-        let stop_x = panel_width
-            .saturating_sub(DESK_OFFSET + DESK_WIDTH + working_width);
+        let stop_x = panel_width.saturating_sub(DESK_OFFSET + DESK_WIDTH + working_width);
         state.mascot_x = stop_x;
         state.mascot_frame = 2;
         let output = render_mascot_scene(&state, 2, panel_width, 14);
@@ -959,7 +924,8 @@ mod tests {
             "                                 █▀─▐█▌",
             "                                 ▀▀████",
             "                                ██ █  █",
-        ].join("\n");
+        ]
+        .join("\n");
         assert_eq!(output, expected);
     }
 
@@ -969,8 +935,7 @@ mod tests {
         state.mascot_state = MascotState::Working;
         let panel_width = 40u16;
         let working_width = CHAIR_WIDTH + 2;
-        let stop_x = panel_width
-            .saturating_sub(DESK_OFFSET + DESK_WIDTH + working_width);
+        let stop_x = panel_width.saturating_sub(DESK_OFFSET + DESK_WIDTH + working_width);
         state.mascot_x = stop_x;
         state.mascot_frame = 3;
         let output = render_mascot_scene(&state, 2, panel_width, 14);
@@ -979,7 +944,8 @@ mod tests {
             "                                 █▀╶▐█▌",
             "                                 ▀▀████",
             "                                ██ █  █",
-        ].join("\n");
+        ]
+        .join("\n");
         assert_eq!(output, expected);
     }
 
@@ -996,7 +962,8 @@ mod tests {
             "                ▄ ▄                 ▐█▌",
             "               ▄▀▀▀▄               ████",
             "               ▖ ▗              ██ █  █",
-        ].join("\n");
+        ]
+        .join("\n");
         assert_eq!(output, expected);
     }
 
@@ -1013,7 +980,8 @@ mod tests {
             "                ▄▘ ▄                ▐█▌",
             "               ▄▀▀▀▄               ████",
             "               ▘ ▗              ██ █  █",
-        ].join("\n");
+        ]
+        .join("\n");
         assert_eq!(output, expected);
     }
 
@@ -1030,7 +998,8 @@ mod tests {
             "                ▄ ▄",
             "               ▄▀▀▀▄               ████",
             "                 ▗ ▖            ██ █  █",
-        ].join("\n");
+        ]
+        .join("\n");
         assert_eq!(output, expected);
     }
 
@@ -1047,7 +1016,8 @@ mod tests {
             "                ▄▝ ▄",
             "               ▄▀▀▀▄               ████",
             "                ▖ ▗             ██ █  █",
-        ].join("\n");
+        ]
+        .join("\n");
         assert_eq!(output, expected);
     }
 }

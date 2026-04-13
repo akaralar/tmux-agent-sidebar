@@ -1,7 +1,7 @@
 pub mod bottom;
-pub mod mascot;
 pub mod colors;
 pub mod icons;
+pub mod mascot;
 pub mod panes;
 pub mod text;
 
@@ -31,6 +31,20 @@ pub fn bottom_panel_height_from_tmux() -> u16 {
     bottom_panel_height_from_options(&opts)
 }
 
+/// Read `@sidebar_mascot` from tmux global options, defaulting to `false` (off).
+/// Accepts `on`/`off`, `true`/`false`, `1`/`0` (case-insensitive).
+pub fn mascot_enabled_from_options(opts: &HashMap<String, String>) -> bool {
+    opts.get("@sidebar_mascot")
+        .map(|s| s.trim().to_ascii_lowercase())
+        .map(|s| matches!(s.as_str(), "on" | "true" | "1" | "yes"))
+        .unwrap_or(false)
+}
+
+pub fn mascot_enabled_from_tmux() -> bool {
+    let opts = crate::tmux::get_all_global_options();
+    mascot_enabled_from_options(&opts)
+}
+
 // ── public entry point ──────────────────────────────────────────────
 
 pub fn draw(frame: &mut Frame, state: &mut AppState) {
@@ -56,8 +70,10 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
 
     if bot_h > 0 && chunks.len() > 2 {
         bottom::draw_bottom(frame, state, chunks[2]);
-        let running_count = state.running_count();
-        mascot::draw_mascot(frame, state, chunks[2], running_count);
+        if state.mascot_enabled {
+            let running_count = state.running_count();
+            mascot::draw_mascot(frame, state, chunks[2], running_count);
+        }
     }
 }
 
@@ -105,5 +121,33 @@ mod tests {
     fn bottom_height_falls_back_on_empty_value() {
         let opts = opts_with("@sidebar_bottom_height", "");
         assert_eq!(bottom_panel_height_from_options(&opts), BOTTOM_PANEL_HEIGHT);
+    }
+
+    #[test]
+    fn mascot_defaults_off_when_option_missing() {
+        let opts = HashMap::new();
+        assert!(!mascot_enabled_from_options(&opts));
+    }
+
+    #[test]
+    fn mascot_enabled_when_on() {
+        for value in ["on", "ON", "true", "1", "yes"] {
+            let opts = opts_with("@sidebar_mascot", value);
+            assert!(
+                mascot_enabled_from_options(&opts),
+                "expected {value} to enable"
+            );
+        }
+    }
+
+    #[test]
+    fn mascot_disabled_when_off() {
+        for value in ["off", "false", "0", "no", ""] {
+            let opts = opts_with("@sidebar_mascot", value);
+            assert!(
+                !mascot_enabled_from_options(&opts),
+                "expected {value} to disable"
+            );
+        }
     }
 }

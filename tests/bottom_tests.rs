@@ -111,9 +111,8 @@ fn snapshot_git_status_tab_ui() {
     let output = render_to_string(&mut state, 28, 24);
     insta::assert_snapshot!(output, @"
      ≡1  ●1  ◐0  ○0  ✕0
-      ▄ ▄                   ▐█▌▾
-    p▄▀▀▀▄t                ████
-      ▀ ▀               ██ █  █
+                             — ▾
+    project
     ╭ Activity │ Git ──────────╮
     │ feature/sidebar     ↑2↓1 │
     │ +42/-15          3 files │
@@ -151,9 +150,8 @@ fn snapshot_git_clean_ui() {
     let output = render_to_string(&mut state, 28, 24);
     insta::assert_snapshot!(output, @"
      ≡1  ●1  ◐0  ○0  ✕0
-      ▄ ▄                   ▐█▌▾
-    p▄▀▀▀▄t                ████
-      ▀ ▀               ██ █  █
+                             — ▾
+    project
     ╭ Activity │ Git ──────────╮
     │    Working tree clean    │
     ╰──────────────────────────╯
@@ -188,9 +186,8 @@ fn snapshot_activity_tab_active_ui() {
     let output = render_to_string(&mut state, 28, 24);
     insta::assert_snapshot!(output, @"
      ≡1  ●1  ◐0  ○0  ✕0
-      ▄ ▄                   ▐█▌▾
-    p▄▀▀▀▄t                ████
-      ▀ ▀               ██ █  █
+                             — ▾
+    project
     ╭ Activity │ Git ──────────╮
     │10:32                 Edit│
     │  src/main.rs             │
@@ -222,9 +219,8 @@ fn snapshot_tab_bar_renders_both_labels() {
 
     let output = render_to_string(&mut state, 28, 14);
     insta::assert_snapshot!(output, @"
-      ▄ ▄●0  ◐0  ○1  ✕0    ████
-     ▄▀▀▀▄              ██ █  █
-    ╭ ▀ ▀ivity │ Git ──────────╮
+     ≡1  ●0  ◐0  ○1  ✕0
+    ╭ Activity │ Git ──────────╮
     │10:32                 Edit│
     │  test                    │
     ╰──────────────────────────╯
@@ -275,9 +271,8 @@ fn snapshot_git_full_info_ui() {
     let output = render_to_string(&mut state, 28, 24);
     insta::assert_snapshot!(output, @"
      ≡1  ●1  ◐0  ○0  ✕0
-      ▄ ▄                   ▐█▌▾
-    p▄▀▀▀▄t                ████
-      ▀ ▀               ██ █  █
+                             — ▾
+    project
     ╭ Activity │ Git ──────────╮
     │ main                     │
     │ +120/-30         3 files │
@@ -330,9 +325,8 @@ fn snapshot_git_long_filename_truncated_ui() {
     let plain = render_to_string(&mut state, 28, 24);
     insta::assert_snapshot!(plain, @"
      ≡1  ●1  ◐0  ○0  ✕0
-      ▄ ▄                   ▐█▌▾
-    p▄▀▀▀▄t                ████
-      ▀ ▀               ██ █  █
+                             — ▾
+    project
     ╭ Activity │ Git ──────────╮
     │ main                     │
     │                  2 files │
@@ -416,9 +410,6 @@ fn snapshot_git_more_than_5_files() {
                              — ▾
     project
     ┃ ● claude
-      ▄ ▄                   ▐█▌
-     ▄▀▀▀▄                 ████
-      ▀ ▀               ██ █  █
     ╭ Activity │ Git ──────────╮
     │ main                     │
     │                  7 files │
@@ -441,9 +432,6 @@ fn snapshot_git_more_than_5_files() {
                              — ▾
     project
     ┃ ● claude
-      ▄ ▄                   ▐█▌
-     ▄▀▀▀▄                 ████
-      ▀ ▀               ██ █  █
     ╭ Activity │ Git ──────────╮
     │ main                     │
     │                  7 files │
@@ -478,9 +466,8 @@ fn snapshot_git_branch_only_no_changes() {
 
     let plain = render_to_string(&mut state, 38, 20);
     insta::assert_snapshot!(plain, @"
-      ▄ ▄●1  ◐0  ○0  ✕0              █▐█▌
-     ▄▀▀▀▄                        ██ █  █
-    ╭ ▀ ▀ivity │ Git ────────────────────╮
+     ≡1  ●1  ◐0  ○0  ✕0
+    ╭ Activity │ Git ────────────────────╮
     │ feature/long-branch-name        ↑5 │
     │────────────────────────────────────│
     │         Working tree clean         │
@@ -516,9 +503,8 @@ fn snapshot_git_pr_number_ui() {
     // PR number should be underlined and blue
     let plain = render_to_string(&mut state, 28, 14);
     insta::assert_snapshot!(plain, @"
-      ▄ ▄●1  ◐0  ○0  ✕0    █▐█▌
-     ▄▀▀▀▄              ██ █  █
-    ╭ ▀ ▀ivity │ Git ──────────╮
+     ≡1  ●1  ◐0  ○0  ✕0
+    ╭ Activity │ Git ──────────╮
     │ feature/fix          #42 │
     │ +10/-3           0 files │
     │──────────────────────────│
@@ -566,9 +552,8 @@ fn snapshot_git_pr_with_diff_ui() {
 
     let plain = render_to_string(&mut state, 28, 14);
     insta::assert_snapshot!(plain, @"
-      ▄ ▄●1  ◐0  ○0  ✕0    █▐█▌
-     ▄▀▀▀▄              ██ █  █
-    ╭ ▀ ▀ivity │ Git ──────────╮
+     ≡1  ●1  ◐0  ○0  ✕0
+    ╭ Activity │ Git ──────────╮
     │ main                #123 │
     │ +55/-20          0 files │
     │──────────────────────────│
@@ -602,9 +587,8 @@ fn snapshot_subagents_tree_ui() {
     project
     ┃ ● claude
         ├ Explore #1
-      ▄ ▄ Plan #2                       ▐█▌
-     ▄▀▀▀▄Explore #2                   ████
-      ▀ ▀                           ██ █  █
+        ├ Plan #2
+        └ Explore #2
     ╭ Activity │ Git ──────────────────────╮
     │            No activity yet           │
     ╰──────────────────────────────────────╯
@@ -639,9 +623,8 @@ fn snapshot_subagent_long_name_truncated_ui() {
                              — ▾
     project
     ┃ ● claude
-      ▄ ▄ superpowers:code-r▐█▌…
-     ▄▀▀▀▄claude-code-guide████
-      ▀ ▀               ██ █  █
+        ├ superpowers:code-revi…
+        └ claude-code-guide #2
     ╭ Activity │ Git ──────────╮
     │      No activity yet     │
     ╰──────────────────────────╯
@@ -675,9 +658,8 @@ fn snapshot_activity_empty_centered_ui() {
      ≡1  ●0  ◐0  ○1  ✕0
                              — ▾
     project
-    ┃ ▄ ▄laude
-     ▄▀▀▀▄iting for prompt…████
-      ▀ ▀               ██ █  █
+    ┃ ○ claude
+        Waiting for prompt…
     ╭ Activity │ Git ──────────╮
     │      No activity yet     │
     ╰──────────────────────────╯
@@ -707,9 +689,8 @@ fn snapshot_git_clean_centered_ui() {
      ≡1  ●0  ◐0  ○1  ✕0
                              — ▾
     project
-    ┃ ▄ ▄laude
-     ▄▀▀▀▄iting for prompt…████
-      ▀ ▀               ██ █  █
+    ┃ ○ claude
+        Waiting for prompt…
     ╭ Activity │ Git ──────────╮
     │    Working tree clean    │
     ╰──────────────────────────╯
@@ -746,9 +727,8 @@ fn snapshot_git_branch_loaded_no_changes_shows_inline_clean() {
     let plain = render_to_string(&mut state, 28, 24);
     insta::assert_snapshot!(plain, @"
      ≡1  ●1  ◐0  ○0  ✕0
-      ▄ ▄                   ▐█▌▾
-    p▄▀▀▀▄t                ████
-      ▀ ▀               ██ █  █
+                             — ▾
+    project
     ╭ Activity │ Git ──────────╮
     │ main                     │
     │──────────────────────────│
@@ -782,9 +762,8 @@ fn snapshot_git_no_data_shows_centered_clean() {
     let output = render_to_string(&mut state, 28, 24);
     insta::assert_snapshot!(output, @"
      ≡1  ●1  ◐0  ○0  ✕0
-      ▄ ▄                   ▐█▌▾
-    p▄▀▀▀▄t                ████
-      ▀ ▀               ██ █  █
+                             — ▾
+    project
     ╭ Activity │ Git ──────────╮
     │    Working tree clean    │
     ╰──────────────────────────╯
@@ -817,9 +796,8 @@ fn test_git_behind_only() {
 
     let plain = render_to_string(&mut state, 28, 14);
     insta::assert_snapshot!(plain, @"
-      ▄ ▄●1  ◐0  ○0  ✕0    █▐█▌
-     ▄▀▀▀▄              ██ █  █
-    ╭ ▀ ▀ivity │ Git ──────────╮
+     ≡1  ●1  ◐0  ○0  ✕0
+    ╭ Activity │ Git ──────────╮
     │ main                  ↓3 │
     │──────────────────────────│
     │    Working tree clean    │
@@ -851,9 +829,8 @@ fn test_git_ahead_and_behind() {
 
     let plain = render_to_string(&mut state, 38, 14);
     insta::assert_snapshot!(plain, @"
-      ▄ ▄●1  ◐0  ○0  ✕0              █▐█▌
-     ▄▀▀▀▄                        ██ █  █
-    ╭ ▀ ▀ivity │ Git ────────────────────╮
+     ≡1  ●1  ◐0  ○0  ✕0
+    ╭ Activity │ Git ────────────────────╮
     │ main                          ↑2↓3 │
     │────────────────────────────────────│
     │         Working tree clean         │
@@ -887,9 +864,8 @@ fn test_git_diff_insertions_only() {
 
     let plain = render_to_string(&mut state, 28, 14);
     insta::assert_snapshot!(plain, @"
-      ▄ ▄●1  ◐0  ○0  ✕0    █▐█▌
-     ▄▀▀▀▄              ██ █  █
-    ╭ ▀ ▀ivity │ Git ──────────╮
+     ≡1  ●1  ◐0  ○0  ✕0
+    ╭ Activity │ Git ──────────╮
     │ main                     │
     │ +25/-0           0 files │
     │──────────────────────────│
@@ -922,9 +898,8 @@ fn test_git_diff_deletions_only() {
 
     let plain = render_to_string(&mut state, 28, 14);
     insta::assert_snapshot!(plain, @"
-      ▄ ▄●1  ◐0  ○0  ✕0    █▐█▌
-     ▄▀▀▀▄              ██ █  █
-    ╭ ▀ ▀ivity │ Git ──────────╮
+     ≡1  ●1  ◐0  ○0  ✕0
+    ╭ Activity │ Git ──────────╮
     │ main                     │
     │ +0/-15           0 files │
     │──────────────────────────│
@@ -969,9 +944,6 @@ fn snapshot_branch_truncated_ui() {
     dotfiles
     ┃ ● claude
     ┃   feature/tmux-sidebar-da…
-      ▄ ▄                   ▐█▌
-     ▄▀▀▀▄                 ████
-      ▀ ▀               ██ █  █
     ╭ Activity │ Git ──────────╮
     │      No activity yet     │
     ╰──────────────────────────╯
@@ -1028,9 +1000,6 @@ fn snapshot_git_staged_unstaged_untracked_ui() {
                              — ▾
     project
     ┃ ● claude
-      ▄ ▄                   ▐█▌
-     ▄▀▀▀▄                 ████
-      ▀ ▀               ██ █  █
     ╭ Activity │ Git ──────────╮
     │ main                  #5 │
     │ +12/-3           4 files │
@@ -1078,9 +1047,8 @@ fn snapshot_git_long_branch_with_pr_ui() {
     let output = render_to_string(&mut state, 28, 24);
     insta::assert_snapshot!(output, @"
      ≡1  ●1  ◐0  ○0  ✕0
-      ▄ ▄                   ▐█▌▾
-    p▄▀▀▀▄t                ████
-      ▀ ▀               ██ █  █
+                             — ▾
+    project
     ╭ Activity │ Git ──────────╮
     │ feature/very-long-… #123 │
     │ +5/-2            1 files │
@@ -1123,9 +1091,8 @@ fn snapshot_git_staged_only_ui() {
     let output = render_to_string(&mut state, 28, 24);
     insta::assert_snapshot!(output, @"
      ≡1  ●1  ◐0  ○0  ✕0
-      ▄ ▄                   ▐█▌▾
-    p▄▀▀▀▄t                ████
-      ▀ ▀               ██ █  █
+                             — ▾
+    project
     ╭ Activity │ Git ──────────╮
     │ main                     │
     │ +20/-0           1 files │
@@ -1171,9 +1138,6 @@ fn snapshot_git_many_files_more_indicator_ui() {
                              — ▾
     project
     ┃ ● claude
-      ▄ ▄                   ▐█▌
-     ▄▀▀▀▄                 ████
-      ▀ ▀               ██ █  █
     ╭ Activity │ Git ──────────╮
     │ dev                      │
     │                  7 files │
