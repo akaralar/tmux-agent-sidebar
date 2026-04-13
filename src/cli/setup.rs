@@ -600,10 +600,11 @@ mod tests {
             .get_mut("hooks")
             .and_then(Value::as_array_mut)
             .expect("inner hooks array");
-        let command = actions[0]
-            .as_object_mut()
-            .expect("command hook object");
-        command.insert("command".to_string(), json!("bash /wrong/hook.sh claude session-start"));
+        let command = actions[0].as_object_mut().expect("command hook object");
+        command.insert(
+            "command".to_string(),
+            json!("bash /wrong/hook.sh claude session-start"),
+        );
 
         assert_eq!(
             missing_hooks("claude", &config, FAKE_HOOK),
