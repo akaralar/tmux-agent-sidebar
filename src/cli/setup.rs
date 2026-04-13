@@ -1,4 +1,4 @@
-//! `doctor` subcommand — prints required hooks and ready-to-paste config
+//! `setup` subcommand — prints required hooks and ready-to-paste config
 //! snippets for Claude Code and Codex as JSON on stdout. Pure generator:
 //! reads only the adapter `HOOK_REGISTRATIONS` tables, never the user's
 //! config files.
@@ -87,12 +87,102 @@ pub(crate) fn build_agent_snippet(agent: &str, hook_script: &str) -> Option<serd
     Some(serde_json::json!({ "hooks": serde_json::Value::Object(hooks) }))
 }
 
-/// Build the full doctor output: version, resolved hook script path,
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct HookSpec {
+    trigger: String,
+    matcher: String,
+    command: String,
+}
+
+#[allow(dead_code)]
+fn normalize_matcher(value: Option<&serde_json::Value>) -> String {
+    value.and_then(|v| v.as_str()).unwrap_or("").to_string()
+}
+
+#[allow(dead_code)]
+fn collect_hook_specs(config: &serde_json::Value) -> Vec<HookSpec> {
+    let Some(hooks) = config.get("hooks").and_then(serde_json::Value::as_object) else {
+        return Vec::new();
+    };
+
+    let mut specs = Vec::new();
+    for (trigger, entries) in hooks {
+        let Some(entries) = entries.as_array() else {
+            continue;
+        };
+        for entry in entries {
+            let matcher = normalize_matcher(entry.get("matcher"));
+            let Some(actions) = entry.get("hooks").and_then(serde_json::Value::as_array) else {
+                continue;
+            };
+            for action in actions {
+                if action.get("type").and_then(serde_json::Value::as_str) != Some("command") {
+                    continue;
+                }
+                let command = action
+                    .get("command")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                specs.push(HookSpec {
+                    trigger: trigger.clone(),
+                    matcher: matcher.clone(),
+                    command,
+                });
+            }
+        }
+    }
+
+    specs
+}
+
+/// Return the trigger names that are required by `agent` but missing from
+/// `current_config`.
+///
+/// The comparison uses the same hook shape that `setup` emits: `trigger`,
+/// `matcher`, and the command string. `matcher` normalizes `null`, missing,
+/// and `""` to the same empty matcher.
+#[allow(dead_code)]
+pub(crate) fn missing_hooks(
+    agent: &str,
+    current_config: &serde_json::Value,
+    hook_script: &str,
+) -> Vec<String> {
+    let Some(expected) = build_agent_snippet(agent, hook_script) else {
+        return Vec::new();
+    };
+
+    let expected = collect_hook_specs(&expected);
+    let actual = collect_hook_specs(current_config);
+    let actual: std::collections::HashSet<HookSpec> = actual.into_iter().collect();
+
+    let mut missing = Vec::new();
+    let mut seen_triggers = std::collections::BTreeSet::new();
+    for spec in expected {
+        if actual.contains(&spec) || !seen_triggers.insert(spec.trigger.clone()) {
+            continue;
+        }
+        missing.push(spec.trigger);
+    }
+    missing
+}
+
+#[allow(dead_code)]
+pub(crate) fn has_missing_hooks(
+    agent: &str,
+    current_config: &serde_json::Value,
+    hook_script: &str,
+) -> bool {
+    !missing_hooks(agent, current_config, hook_script).is_empty()
+}
+
+/// Build the full setup output: version, resolved hook script path,
 /// and a per-agent object containing `config_path`, the normalized
 /// `hooks[]` array, and the ready-to-paste `snippet`.
 ///
 /// Pure function. `hook_script` is passed in so tests can pin it.
-pub(crate) fn build_doctor_output(hook_script: &str) -> serde_json::Value {
+pub(crate) fn build_setup_output(hook_script: &str) -> serde_json::Value {
     let claude = build_agent_entry(
         "claude",
         "~/.claude/settings.json",
@@ -174,7 +264,7 @@ const FALLBACK_HOOK_SCRIPT: &str = "~/.tmux/plugins/tmux-agent-sidebar/hook.sh";
 ///    (tilde intentionally not expanded, matches README).
 ///
 /// When step 1 or 2 succeeds, `detected = true`. When step 3 kicks in,
-/// `detected = false` and `cmd_doctor` surfaces a stderr warning. Never
+/// `detected = false` and `cmd_setup` surfaces a stderr warning. Never
 /// panics.
 fn resolve_hook_script() -> ResolvedHookScript {
     fn fallback() -> ResolvedHookScript {
@@ -208,10 +298,10 @@ fn resolve_hook_script() -> ResolvedHookScript {
 
 /// Pure dispatch core. Returns the exit code and the JSON to print
 /// (or `None` if nothing should be printed, e.g. on error). Splitting
-/// this out keeps `cmd_doctor` a thin I/O wrapper.
-fn run_doctor(args: &[String], hook_script: &str) -> (i32, Option<serde_json::Value>) {
+/// this out keeps `cmd_setup` a thin I/O wrapper.
+fn run_setup(args: &[String], hook_script: &str) -> (i32, Option<serde_json::Value>) {
     match args.len() {
-        0 => (0, Some(build_doctor_output(hook_script))),
+        0 => (0, Some(build_setup_output(hook_script))),
         1 => match build_agent_snippet(&args[0], hook_script) {
             Some(snippet) => (0, Some(snippet)),
             None => {
@@ -223,13 +313,13 @@ fn run_doctor(args: &[String], hook_script: &str) -> (i32, Option<serde_json::Va
             }
         },
         _ => {
-            eprintln!("usage: tmux-agent-sidebar doctor [claude|codex]");
+            eprintln!("usage: tmux-agent-sidebar setup [claude|codex]");
             (2, None)
         }
     }
 }
 
-pub(crate) fn cmd_doctor(args: &[String]) -> i32 {
+pub(crate) fn cmd_setup(args: &[String]) -> i32 {
     let resolved = resolve_hook_script();
     if !resolved.detected {
         eprintln!(
@@ -239,12 +329,12 @@ pub(crate) fn cmd_doctor(args: &[String]) -> i32 {
             resolved.path
         );
     }
-    let (code, json) = run_doctor(args, &resolved.path);
+    let (code, json) = run_setup(args, &resolved.path);
     if let Some(v) = json {
         match serde_json::to_string_pretty(&v) {
             Ok(s) => println!("{}", s),
             Err(e) => {
-                eprintln!("error: failed to serialize doctor output: {}", e);
+                eprintln!("error: failed to serialize setup output: {}", e);
                 return 1;
             }
         }
@@ -343,7 +433,7 @@ mod tests {
         // FALLBACK constant is what the resolver returns as its `path` field
         // when `detected = false`, by exercising the branch indirectly: any
         // `ResolvedHookScript` whose `detected` flag is false MUST use the
-        // documented fallback string so cmd_doctor's warning points somewhere
+        // documented fallback string so cmd_setup's warning points somewhere
         // meaningful.
         let resolved = resolve_hook_script();
         if !resolved.detected {
@@ -451,8 +541,151 @@ mod tests {
     }
 
     #[test]
+    fn missing_hooks_is_empty_for_matching_claude_config() {
+        let config = build_agent_snippet("claude", FAKE_HOOK).unwrap();
+        assert!(missing_hooks("claude", &config, FAKE_HOOK).is_empty());
+        assert!(!has_missing_hooks("claude", &config, FAKE_HOOK));
+    }
+
+    #[test]
+    fn missing_hooks_reports_removed_trigger() {
+        let mut config = build_agent_snippet("claude", FAKE_HOOK).unwrap();
+        let hooks = config
+            .get_mut("hooks")
+            .and_then(Value::as_object_mut)
+            .expect("top-level hooks object");
+        hooks.remove("SessionEnd");
+
+        assert_eq!(
+            missing_hooks("claude", &config, FAKE_HOOK),
+            vec!["SessionEnd".to_string()]
+        );
+        assert!(has_missing_hooks("claude", &config, FAKE_HOOK));
+    }
+
+    #[test]
+    fn missing_hooks_treats_matcher_and_command_changes_as_missing() {
+        let mut config = build_agent_snippet("codex", FAKE_HOOK).unwrap();
+        let hooks = config
+            .get_mut("hooks")
+            .and_then(Value::as_object_mut)
+            .expect("top-level hooks object");
+        let session_start = hooks
+            .get_mut("SessionStart")
+            .and_then(Value::as_array_mut)
+            .expect("SessionStart array");
+        let first = session_start[0]
+            .as_object_mut()
+            .expect("SessionStart entry object");
+
+        first.insert("matcher".to_string(), json!(""));
+        assert_eq!(
+            missing_hooks("codex", &config, FAKE_HOOK),
+            vec!["SessionStart".to_string()]
+        );
+
+        let mut config = build_agent_snippet("claude", FAKE_HOOK).unwrap();
+        let hooks = config
+            .get_mut("hooks")
+            .and_then(Value::as_object_mut)
+            .expect("top-level hooks object");
+        let session_start = hooks
+            .get_mut("SessionStart")
+            .and_then(Value::as_array_mut)
+            .expect("SessionStart array");
+        let entry = session_start[0]
+            .as_object_mut()
+            .expect("SessionStart entry object");
+        let actions = entry
+            .get_mut("hooks")
+            .and_then(Value::as_array_mut)
+            .expect("inner hooks array");
+        let command = actions[0]
+            .as_object_mut()
+            .expect("command hook object");
+        command.insert("command".to_string(), json!("bash /wrong/hook.sh claude session-start"));
+
+        assert_eq!(
+            missing_hooks("claude", &config, FAKE_HOOK),
+            vec!["SessionStart".to_string()]
+        );
+    }
+
+    #[test]
+    fn missing_hooks_ignores_extra_entries() {
+        let mut config = build_agent_snippet("claude", FAKE_HOOK).unwrap();
+        let hooks = config
+            .get_mut("hooks")
+            .and_then(Value::as_object_mut)
+            .expect("top-level hooks object");
+        hooks.insert(
+            "Bogus".to_string(),
+            json!([
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "bash /fake/hook.sh claude bogus"
+                        }
+                    ]
+                }
+            ]),
+        );
+
+        assert!(missing_hooks("claude", &config, FAKE_HOOK).is_empty());
+    }
+
+    #[test]
+    fn missing_hooks_accepts_multiple_entries_and_actions_for_same_trigger() {
+        let mut config = build_agent_snippet("claude", FAKE_HOOK).unwrap();
+        let hooks = config
+            .get_mut("hooks")
+            .and_then(Value::as_object_mut)
+            .expect("top-level hooks object");
+
+        let session_start = hooks
+            .get_mut("SessionStart")
+            .and_then(Value::as_array_mut)
+            .expect("SessionStart array");
+        let mut duplicate_entry = session_start[0].clone();
+        duplicate_entry
+            .as_object_mut()
+            .expect("SessionStart entry object")
+            .get_mut("hooks")
+            .and_then(Value::as_array_mut)
+            .expect("inner hooks array")[0]
+            .as_object_mut()
+            .expect("command hook object")
+            .insert(
+                "command".to_string(),
+                json!("bash /wrong/hook.sh claude session-start"),
+            );
+        session_start.push(duplicate_entry);
+
+        let notification = hooks
+            .get_mut("Notification")
+            .and_then(Value::as_array_mut)
+            .expect("Notification array");
+        let notification_entry = notification[0]
+            .as_object_mut()
+            .expect("Notification entry object");
+        let notification_actions = notification_entry
+            .get_mut("hooks")
+            .and_then(Value::as_array_mut)
+            .expect("Notification hooks array");
+        notification_actions.push(json!({
+            "type": "command",
+            "command": "bash /tmp/extra-notify.sh claude notification",
+        }));
+
+        assert!(missing_hooks("claude", &config, FAKE_HOOK).is_empty());
+        assert!(!has_missing_hooks("claude", &config, FAKE_HOOK));
+    }
+
+    #[test]
     fn full_output_has_expected_top_level_keys() {
-        let v = build_doctor_output(FAKE_HOOK);
+        let v = build_setup_output(FAKE_HOOK);
         assert_eq!(
             v.get("version").and_then(Value::as_str),
             Some(crate::VERSION)
@@ -469,7 +702,7 @@ mod tests {
 
     #[test]
     fn full_output_snippet_matches_single_agent_snippet() {
-        let full = build_doctor_output(FAKE_HOOK);
+        let full = build_setup_output(FAKE_HOOK);
         for agent in ["claude", "codex"] {
             let from_full = full
                 .pointer(&format!("/agents/{}/snippet", agent))
@@ -481,7 +714,7 @@ mod tests {
 
     #[test]
     fn full_output_normalized_hooks_count_matches_table() {
-        let full = build_doctor_output(FAKE_HOOK);
+        let full = build_setup_output(FAKE_HOOK);
         for (agent, table_len) in [
             ("claude", ClaudeAdapter::HOOK_REGISTRATIONS.len()),
             ("codex", CodexAdapter::HOOK_REGISTRATIONS.len()),
@@ -501,7 +734,7 @@ mod tests {
 
     #[test]
     fn full_output_normalized_entry_shape() {
-        let full = build_doctor_output(FAKE_HOOK);
+        let full = build_setup_output(FAKE_HOOK);
         let first = full.pointer("/agents/claude/hooks/0").unwrap();
         assert_eq!(first.get("trigger"), Some(&json!("SessionStart")));
         assert_eq!(first.get("matcher"), Some(&Value::Null));
@@ -518,7 +751,7 @@ mod tests {
 
     #[test]
     fn full_output_config_paths() {
-        let full = build_doctor_output(FAKE_HOOK);
+        let full = build_setup_output(FAKE_HOOK);
         assert_eq!(
             full.pointer("/agents/claude/config_path")
                 .and_then(Value::as_str),
@@ -532,15 +765,15 @@ mod tests {
     }
 
     #[test]
-    fn run_doctor_no_args_returns_full_output() {
-        let (code, json) = run_doctor(&[], FAKE_HOOK);
+    fn run_setup_no_args_returns_full_output() {
+        let (code, json) = run_setup(&[], FAKE_HOOK);
         assert_eq!(code, 0);
         assert!(json.unwrap().get("agents").is_some());
     }
 
     #[test]
-    fn run_doctor_claude_returns_only_snippet() {
-        let (code, json) = run_doctor(&["claude".to_string()], FAKE_HOOK);
+    fn run_setup_claude_returns_only_snippet() {
+        let (code, json) = run_setup(&["claude".to_string()], FAKE_HOOK);
         assert_eq!(code, 0);
         let v = json.unwrap();
         assert!(v.get("hooks").is_some());
@@ -550,8 +783,8 @@ mod tests {
     }
 
     #[test]
-    fn run_doctor_codex_returns_only_snippet() {
-        let (code, json) = run_doctor(&["codex".to_string()], FAKE_HOOK);
+    fn run_setup_codex_returns_only_snippet() {
+        let (code, json) = run_setup(&["codex".to_string()], FAKE_HOOK);
         assert_eq!(code, 0);
         let v = json.unwrap();
         assert!(v.get("hooks").is_some());
@@ -559,22 +792,22 @@ mod tests {
     }
 
     #[test]
-    fn run_doctor_unknown_agent_returns_err_exit_2() {
-        let (code, json) = run_doctor(&["gemini".to_string()], FAKE_HOOK);
+    fn run_setup_unknown_agent_returns_err_exit_2() {
+        let (code, json) = run_setup(&["gemini".to_string()], FAKE_HOOK);
         assert_eq!(code, 2);
         assert!(json.is_none());
     }
 
     #[test]
-    fn run_doctor_too_many_args_returns_err_exit_2() {
-        let (code, json) = run_doctor(&["claude".to_string(), "extra".to_string()], FAKE_HOOK);
+    fn run_setup_too_many_args_returns_err_exit_2() {
+        let (code, json) = run_setup(&["claude".to_string(), "extra".to_string()], FAKE_HOOK);
         assert_eq!(code, 2);
         assert!(json.is_none());
     }
 
     #[test]
     fn full_output_snapshot() {
-        let v = build_doctor_output(FAKE_HOOK);
+        let v = build_setup_output(FAKE_HOOK);
         let actual = serde_json::to_string_pretty(&v).unwrap();
         // Version-independent snapshot: substitute the placeholder at test
         // time so a version bump in Cargo.toml does not break this test.
@@ -583,7 +816,7 @@ mod tests {
         let expected = EXPECTED_FULL_OUTPUT.replace("__VERSION__", crate::VERSION);
         assert_eq!(
             actual, expected,
-            "doctor full output changed; update EXPECTED_FULL_OUTPUT in the \
+            "setup full output changed; update EXPECTED_FULL_OUTPUT in the \
              same commit that changes HOOK_REGISTRATIONS"
         );
     }
@@ -955,7 +1188,7 @@ mod tests {
 
     #[test]
     fn full_output_normalized_command_matches_snippet_command() {
-        let full = build_doctor_output(FAKE_HOOK);
+        let full = build_setup_output(FAKE_HOOK);
         for agent in ["claude", "codex"] {
             let hooks = full
                 .pointer(&format!("/agents/{}/hooks", agent))

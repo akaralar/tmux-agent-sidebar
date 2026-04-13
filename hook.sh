@@ -2,7 +2,7 @@
 # Thin wrapper: delegates to the Rust binary. Called by Claude Code /
 # Codex hooks (settings.json).
 #
-# Why this file exists even though `tmux-agent-sidebar doctor` can emit
+# Why this file exists even though `tmux-agent-sidebar setup` can emit
 # absolute binary paths:
 #
 # 1. Late binding. settings.json only needs to know where `hook.sh`
@@ -10,7 +10,7 @@
 #    the user can move or rebuild the binary (bin/ ↔ target/release/,
 #    relocate the plugin dir, swap install methods) without having to
 #    regenerate their agent config. Without this indirection, any
-#    doctor-generated path becomes a stale snapshot the moment the
+#    setup-generated path becomes a stale snapshot the moment the
 #    binary moves.
 #
 # 2. Graceful absence. If the binary is missing — during a rebuild,

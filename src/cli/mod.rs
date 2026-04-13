@@ -1,6 +1,6 @@
-mod doctor;
 mod hook;
 mod label;
+mod setup;
 mod toggle;
 
 use std::io::Read;
@@ -13,7 +13,7 @@ pub fn run(args: &[String]) -> Option<i32> {
     let cmd = args.first().map(|s| s.as_str())?;
     let rest = &args[1..];
     let code = match cmd {
-        "doctor" => doctor::cmd_doctor(rest),
+        "setup" => setup::cmd_setup(rest),
         "hook" => hook::cmd_hook(rest),
         "toggle" => toggle::cmd_toggle(rest),
         "toggle-all" => toggle::cmd_toggle_all(rest),

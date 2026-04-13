@@ -12,7 +12,7 @@ pub(crate) fn json_str<'a>(val: &'a serde_json::Value, key: &str) -> &'a str {
 /// produces once the hook fires.
 ///
 /// Each adapter exposes its full `HOOK_REGISTRATIONS` table so install
-/// wizards, README snippets, doctor commands, and docs can all be generated
+/// wizards, README snippets, setup commands, and docs can all be generated
 /// from a single source of truth. The `kind` field is a compile-time enum,
 /// not a string, so typos cannot creep in. Drift between the table and the
 /// adapter's `parse()` match arms is caught by the tests in `claude.rs` /
