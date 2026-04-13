@@ -498,41 +498,28 @@ impl AppState {
         self.pane_states.remove(pane_id);
     }
 
-    /// Refresh the missing-hook list for the currently selected agent pane.
+    /// Resolve the notices popup inputs once.
     ///
-    /// Always clears the previous result first: the early-return branches
-    /// below leave nothing behind, so focus moving to a non-agent pane (or
-    /// the focused pane disappearing) correctly drops the stale ⓘ badge
-    /// and copy actions instead of pinning them to the last agent.
+    /// Every input is static for the sidebar's lifetime:
+    /// `claude_plugin_installed_version` and
+    /// `claude_settings_has_residual_hooks` are resolved at `main.rs`
+    /// startup, and `settings.json` / `hooks.json` edits only take
+    /// effect after a sidebar restart — matching the restart-required
+    /// contract already documented for `/plugin install`. So this runs
+    /// once from `main.rs` instead of being pinned to the per-tick
+    /// refresh loop, and the ⓘ badge no longer depends on which pane
+    /// happens to be focused.
+    ///
+    /// Both Claude and Codex are always evaluated so a user who closes
+    /// their last agent pane still sees any outstanding hook setup
+    /// warnings.
     pub fn refresh_notices(&mut self) {
-        self.notices_missing_hook_groups.clear();
-        self.claude_plugin_notice = None;
+        self.claude_plugin_notice = compute_claude_plugin_notice(
+            self.claude_plugin_installed_version.as_deref(),
+            crate::VERSION,
+            self.claude_settings_has_residual_hooks,
+        );
 
-        let Some(pane_id) = self.focused_pane_id.clone() else {
-            return;
-        };
-        let Some(agent) = self
-            .pane_by_id(&pane_id)
-            .map(|pane| pane.agent.as_str().to_string())
-        else {
-            return;
-        };
-
-        // Plugin notices are scoped to Claude panes (and the debug
-        // forced-display mode). Codex users never see plugin chatter
-        // because Codex CLI has no plugin mechanism upstream. The
-        // installed version + residual-hook flag are resolved once at
-        // sidebar startup from Claude Code's plugin registry and the
-        // user's settings.json — see `claude_plugin_installed_version`
-        // and `claude_settings_has_residual_hooks`.
-        let plugin_notice_relevant = agent == crate::tmux::CLAUDE_AGENT || debug_forced_display();
-        if plugin_notice_relevant {
-            self.claude_plugin_notice = compute_claude_plugin_notice(
-                self.claude_plugin_installed_version.as_deref(),
-                crate::VERSION,
-                self.claude_settings_has_residual_hooks,
-            );
-        }
         // Suppress Claude from the missing-hooks list whenever the
         // plugin is installed. Residual legacy entries are already
         // surfaced by the Plugin section's `DuplicateHooks` notice, so
@@ -550,7 +537,10 @@ impl AppState {
         };
         self.notices_missing_hook_groups = compute_missing_hook_groups(
             claude_plugin_present,
-            notices_agents(&agent),
+            vec![
+                crate::tmux::CLAUDE_AGENT.to_string(),
+                crate::tmux::CODEX_AGENT.to_string(),
+            ],
             &hook_script,
             load_config,
         );
@@ -929,14 +919,6 @@ impl AppState {
     }
 }
 
-fn notices_agents(current_agent: &str) -> Vec<String> {
-    if debug_forced_display() {
-        return vec!["claude".to_string(), "codex".to_string()];
-    }
-
-    vec![current_agent.to_string()]
-}
-
 /// Compute the per-agent missing-hook list shown in the notices popup.
 ///
 /// `claude_plugin_present` gates Claude visibility: when the plugin is
@@ -1280,18 +1262,6 @@ mod tests {
         let path = crate::activity::log_file_path(pane_id);
         fs::write(&path, contents).unwrap();
         path.to_string_lossy().into_owned()
-    }
-
-    #[test]
-    fn notices_agents_falls_back_to_current_agent() {
-        if debug_forced_display() {
-            assert_eq!(
-                notices_agents("claude"),
-                vec!["claude".to_string(), "codex".to_string()]
-            );
-        } else {
-            assert_eq!(notices_agents("claude"), vec!["claude".to_string()]);
-        }
     }
 
     #[test]
@@ -1938,6 +1908,7 @@ mod tests {
                 name: "lib.rs".into(),
                 additions: 10,
                 deletions: 5,
+                path: String::new(),
             }],
             unstaged_files: vec![],
             untracked_files: vec!["new.rs".into()],

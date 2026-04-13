@@ -85,10 +85,10 @@ Per-pane file-based state:
 | `notices_popup_open` | On user input | Notices popup visibility |
 | `notices_popup_area` | Every frame (render) | Rendered area of notices popup (for click routing) |
 | `notices_button_col` | Every frame (render) | Notices indicator button column position |
-| `notices_missing_hook_groups` | Every 1s (refresh cycle) | Per-agent missing hook groups shown in the popup |
+| `notices_missing_hook_groups` | Once at startup | Per-agent missing hook groups shown in the popup |
 | `claude_plugin_installed_version` | Once at startup | Version recorded in Claude Code's installed plugin registry |
 | `claude_settings_has_residual_hooks` | Once at startup | Whether `~/.claude/settings.json` still contains legacy Claude hook entries |
-| `claude_plugin_notice` | Every 1s (refresh cycle) | Derived Claude plugin notice shown in the popup |
+| `claude_plugin_notice` | Once at startup | Derived Claude plugin notice shown in the popup |
 | `notices_copy_targets` | Every frame (render) | Click targets for `[copy]` / `[prompt]` labels in the notices popup |
 | `notices_copied_at` | On successful copy | Transient `[copied]` feedback state |
 | `pending_osc52_copy` | On successful copy / frame flush | OSC 52 clipboard payload queued for terminal forwarding |
@@ -124,7 +124,8 @@ Per-pane file-based state:
 ├─────────────────────────────────────────────────────────────┤
 │  Once at startup                                             │
 │  theme, bottom_panel_height, claude_plugin_installed_version │
-│  claude_settings_has_residual_hooks                          │
+│  claude_settings_has_residual_hooks, claude_plugin_notice,   │
+│  notices_missing_hook_groups                                 │
 ├─────────────────────────────────────────────────────────────┤
 │  Every 2s (git background thread)                           │
 │  git (branch, diff, ahead/behind, PR)                       │

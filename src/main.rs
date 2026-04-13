@@ -115,6 +115,11 @@ fn run_app(
     // the notices popup can warn about duplicate hook execution.
     state.claude_settings_has_residual_hooks =
         tmux_agent_sidebar::cli::plugin_state::claude_settings_has_residual_hooks();
+    // Notice inputs are static after the two lines above, so compute
+    // them once here instead of from the per-tick refresh loop. This
+    // also decouples the ⓘ badge from `focused_pane_id`, so killing
+    // the last agent pane no longer drops outstanding setup warnings.
+    state.refresh_notices();
     state.refresh();
 
     let (git_tx, git_rx) = mpsc::channel::<GitData>();

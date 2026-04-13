@@ -123,7 +123,6 @@ impl AppState {
         }
         self.refresh_session_names();
         self.refresh_activity_data();
-        self.refresh_notices();
         window_active
     }
 
