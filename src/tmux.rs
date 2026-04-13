@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::Command;
 
 pub const CLAUDE_AGENT: &str = "claude";
@@ -241,6 +242,14 @@ pub(crate) fn parse_pane_line(line: &str) -> Option<PaneInfo> {
     }
 
     let agent = AgentType::from_str(&parts[3])?;
+    let current_command = parts[6].as_str();
+
+    // Codex panes can leave stale tmux metadata behind after the agent exits
+    // and the pane falls back to the user's shell. In that case, ignore the
+    // pane so the sidebar stops displaying a non-existent Codex session.
+    if agent == AgentType::Codex && is_shell_command(current_command) {
+        return None;
+    }
 
     let pane_pid: Option<u32> = parts[13].parse().ok();
 
@@ -292,6 +301,41 @@ pub(crate) fn parse_pane_line(line: &str) -> Option<PaneInfo> {
         session_id,
         session_name: String::new(),
     })
+}
+
+fn is_shell_command(command: &str) -> bool {
+    const SHELL_COMMANDS: &[&str] = &[
+        "ash",
+        "bash",
+        "csh",
+        "dash",
+        "elvish",
+        "fish",
+        "ksh",
+        "mksh",
+        "nu",
+        "oksh",
+        "pdksh",
+        "posh",
+        "powershell",
+        "powershell.exe",
+        "pwsh",
+        "sh",
+        "tcsh",
+        "xonsh",
+        "zsh",
+    ];
+
+    let Some(token) = command.split_whitespace().next() else {
+        return false;
+    };
+    let executable = Path::new(token)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(token)
+        .to_ascii_lowercase();
+
+    SHELL_COMMANDS.contains(&executable.as_str())
 }
 
 /// Detect Codex permission mode from process args (--full-auto, --yolo, etc.)
@@ -1022,13 +1066,38 @@ mod tests {
     fn parse_pane_line_codex_ignores_permission_mode_field() {
         let mut fields = full_fields();
         fields[3] = "codex";
-        fields[15] = "auto"; // should be ignored for codex
+        fields[6] = "node";
+        fields[16] = "auto"; // should be ignored for codex
         let line = make_pane_line(&fields);
         let pane = parse_pane_line(&line).unwrap();
         assert_eq!(
             pane.permission_mode,
             PermissionMode::Default,
             "codex should not read permission_mode from tmux variable"
+        );
+    }
+
+    #[test]
+    fn parse_pane_line_rejects_stale_codex_shell_pane() {
+        let mut fields = full_fields();
+        fields[3] = "codex";
+        fields[6] = "zsh";
+        let line = make_pane_line(&fields);
+        assert!(
+            parse_pane_line(&line).is_none(),
+            "codex metadata on a shell pane should be treated as stale"
+        );
+    }
+
+    #[test]
+    fn parse_pane_line_rejects_stale_codex_shell_pane_with_path_and_args() {
+        let mut fields = full_fields();
+        fields[3] = "codex";
+        fields[6] = "/usr/local/bin/PwSh -l";
+        let line = make_pane_line(&fields);
+        assert!(
+            parse_pane_line(&line).is_none(),
+            "shell detection should handle paths, args, and case differences"
         );
     }
 }
