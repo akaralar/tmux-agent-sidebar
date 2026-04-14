@@ -12,8 +12,10 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
+use std::collections::HashMap;
 use tmux_agent_sidebar::SPINNER_PULSE;
 use tmux_agent_sidebar::git::{self, GitData};
+use tmux_agent_sidebar::session;
 use tmux_agent_sidebar::state::{AppState, BottomTab, Focus, HyperlinkOverlay};
 use tmux_agent_sidebar::tmux;
 use tmux_agent_sidebar::ui;
@@ -99,30 +101,35 @@ fn run_app(
     state.refresh();
     let mut window_inactive_count: u32 = 0;
 
-    if let Some(ref pane_id) = state.focused_pane_id {
-        if let Some(path) = tmux::get_pane_path(pane_id) {
-            state.apply_git_data(git::fetch_git_data(&path));
-        }
+    if let Some(ref pane_id) = state.focused_pane_id
+        && let Some(path) = tmux::get_pane_path(pane_id)
+    {
+        state.apply_git_data(git::fetch_git_data(&path));
     }
 
     // Resolve the installed Claude Code plugin version once at startup,
     // matching the version_notice pattern. Restart the sidebar after a
     // /plugin install or /plugin uninstall to pick up the new state.
-    state.claude_plugin_installed_version =
+    state.notices.claude_plugin_installed_version =
         tmux_agent_sidebar::cli::plugin_state::installed_plugin_version();
     // Likewise resolve whether the user still has legacy
     // tmux-agent-sidebar/hook.sh entries in ~/.claude/settings.json so
     // the notices popup can warn about duplicate hook execution.
-    state.claude_settings_has_residual_hooks =
+    state.notices.claude_settings_has_residual_hooks =
         tmux_agent_sidebar::cli::plugin_state::claude_settings_has_residual_hooks();
     // Notice inputs are static after the two lines above, so compute
     // them once here instead of from the per-tick refresh loop. This
     // also decouples the ⓘ badge from `focused_pane_id`, so killing
     // the last agent pane no longer drops outstanding setup warnings.
     state.refresh_notices();
+    // Populate session names synchronously before the first draw so
+    // `/rename`-assigned labels show up without waiting for the first
+    // background scan tick.
+    state.session_names = session::scan_session_names();
     state.refresh();
 
     let (git_tx, git_rx) = mpsc::channel::<GitData>();
+    let (session_tx, session_rx) = mpsc::channel::<HashMap<String, String>>();
     let (version_tx, version_rx) = mpsc::channel::<UpdateNotice>();
     let tmux_pane_clone = state.tmux_pane.clone();
     let git_tab_active =
@@ -130,6 +137,9 @@ fn run_app(
     let git_tab_flag = std::sync::Arc::clone(&git_tab_active);
     std::thread::spawn(move || {
         git_poll_loop(&tmux_pane_clone, &git_tx, &git_tab_flag);
+    });
+    std::thread::spawn(move || {
+        session_poll_loop(&session_tx);
     });
     std::thread::spawn(move || {
         if let Some(notice) = tmux_agent_sidebar::version::fetch_update_notice() {
@@ -146,7 +156,7 @@ fn run_app(
         terminal.draw(|frame| ui::draw(frame, &mut state))?;
 
         // Write OSC 8 hyperlink overlays after frame render
-        write_hyperlink_overlays(terminal.backend_mut(), &state.hyperlink_overlays)?;
+        write_hyperlink_overlays(terminal.backend_mut(), &state.layout.hyperlink_overlays)?;
 
         // Flush any pending OSC 52 clipboard payload (set by notices copy).
         if let Some(payload) = state.pending_osc52_copy.take() {
@@ -164,21 +174,24 @@ fn run_app(
             loop {
                 let ev = event::read()?;
                 match ev {
-                    Event::Key(key) if state.notices_popup_open => match key.code {
-                        KeyCode::Esc => state.close_notices_popup(),
-                        _ => {}
-                    },
-                    Event::Key(key) if state.repo_popup_open => match key.code {
+                    Event::Key(key) if state.is_notices_popup_open() => {
+                        if key.code == KeyCode::Esc {
+                            state.close_notices_popup();
+                        }
+                    }
+                    Event::Key(key) if state.is_repo_popup_open() => match key.code {
                         KeyCode::Esc => state.close_repo_popup(),
                         KeyCode::Char('j') | KeyCode::Down => {
                             let count = state.repo_names().len();
-                            if state.repo_popup_selected + 1 < count {
-                                state.repo_popup_selected += 1;
+                            let current = state.repo_popup_selected();
+                            if current + 1 < count {
+                                state.set_repo_popup_selected(current + 1);
                             }
                         }
                         KeyCode::Char('k') | KeyCode::Up => {
-                            if state.repo_popup_selected > 0 {
-                                state.repo_popup_selected -= 1;
+                            let current = state.repo_popup_selected();
+                            if current > 0 {
+                                state.set_repo_popup_selected(current - 1);
                             }
                         }
                         KeyCode::Enter => state.confirm_repo_popup(),
@@ -318,6 +331,10 @@ fn run_app(
             state.apply_git_data(data);
         }
 
+        if let Ok(names) = session_rx.try_recv() {
+            state.session_names = names;
+        }
+
         if let Ok(notice) = version_rx.try_recv() {
             state.version_notice = Some(notice);
         }
@@ -340,6 +357,19 @@ fn write_hyperlink_overlays(
         backend.flush()?;
     }
     Ok(())
+}
+
+/// Session name polling thread. Scans `~/.claude/sessions/*.json` every 10
+/// seconds so the main TUI thread never performs blocking filesystem I/O
+/// to refresh `/rename`-assigned labels.
+fn session_poll_loop(tx: &mpsc::Sender<HashMap<String, String>>) {
+    loop {
+        std::thread::sleep(Duration::from_secs(10));
+        let names = session::scan_session_names();
+        if tx.send(names).is_err() {
+            return;
+        }
+    }
 }
 
 /// Git data polling thread. Fetches git status every 2 seconds while the Git
