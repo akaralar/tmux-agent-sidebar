@@ -2,6 +2,7 @@ pub mod bottom;
 pub mod colors;
 pub mod icons;
 pub mod mascot;
+pub mod notices;
 pub mod panes;
 pub mod text;
 
@@ -48,7 +49,7 @@ pub fn mascot_enabled_from_tmux() -> bool {
 // ── public entry point ──────────────────────────────────────────────
 
 pub fn draw(frame: &mut Frame, state: &mut AppState) {
-    state.hyperlink_overlays.clear();
+    state.layout.hyperlink_overlays.clear();
     let area = frame.area();
 
     let bot_h = state.bottom_panel_height;

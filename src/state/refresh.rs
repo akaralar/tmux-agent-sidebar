@@ -14,6 +14,15 @@ pub(crate) enum TaskProgressDecision {
     Skip,
 }
 
+/// A per-pane task-progress update computed in the first pass of
+/// `refresh_task_progress`, applied back to `pane_states` in the second pass.
+struct PaneTaskUpdate {
+    pane_id: String,
+    progress: Option<TaskProgress>,
+    dismissed_total: Option<usize>,
+    inactive_since: Option<u64>,
+}
+
 pub(crate) fn classify_task_progress(
     progress: &TaskProgress,
     dismissed_total: Option<usize>,
@@ -48,8 +57,7 @@ impl AppState {
         sessions: Vec<SessionInfo>,
     ) {
         self.sidebar_focused = sidebar_focused;
-        self.sessions = sessions;
-        self.repo_groups = crate::group::group_panes_by_repo(&self.sessions);
+        self.repo_groups = crate::group::group_panes_by_repo(&sessions);
         self.prune_pane_states_to_current_panes();
         self.rebuild_row_targets();
         self.find_focused_pane();
@@ -69,6 +77,7 @@ impl AppState {
             "@pane_worktree_branch",
             "@pane_started_at",
             "@pane_wait_reason",
+            "@pane_session_id",
         ] {
             tmux::unset_pane_option(pane_id, key);
         }
@@ -120,8 +129,27 @@ impl AppState {
         } else {
             self.apply_session_snapshot(focused, sessions);
         }
+        self.refresh_session_names();
         self.refresh_activity_data();
         window_active
+    }
+
+    /// Apply the current `session_id → name` map to each pane so the
+    /// sidebar can render `/rename`-assigned labels. The map itself is
+    /// refreshed off-thread by `session_poll_loop` in `main.rs`; this
+    /// function only consumes the cached snapshot.
+    fn refresh_session_names(&mut self) {
+        for group in &mut self.repo_groups {
+            for (pane, _) in &mut group.panes {
+                if let Some(sid) = &pane.session_id
+                    && let Some(name) = self.session_names.get(sid)
+                {
+                    pane.session_name.clone_from(name);
+                } else {
+                    pane.session_name.clear();
+                }
+            }
+        }
     }
 
     pub(crate) fn refresh_port_data(
@@ -130,7 +158,8 @@ impl AppState {
     ) -> Option<crate::port::PaneProcessSnapshot> {
         const PORT_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 
-        if !self.port_scan_initialized || self.last_port_refresh.elapsed() >= PORT_REFRESH_INTERVAL
+        if !self.timers.port_scan_initialized
+            || self.timers.last_port_refresh.elapsed() >= PORT_REFRESH_INTERVAL
         {
             let scanned = crate::port::scan_session_process_snapshot(sessions)?;
             let mut active_ids: HashSet<String> = HashSet::new();
@@ -166,8 +195,8 @@ impl AppState {
             }
             self.pane_states
                 .retain(|pane_id, _| active_ids.contains(pane_id));
-            self.port_scan_initialized = true;
-            self.last_port_refresh = std::time::Instant::now();
+            self.timers.port_scan_initialized = true;
+            self.timers.last_port_refresh = std::time::Instant::now();
             return Some(scanned);
         }
 
@@ -176,8 +205,7 @@ impl AppState {
 
     pub(crate) fn refresh_task_progress(&mut self) {
         let mut active_pane_ids: HashSet<String> = HashSet::new();
-        let mut updates: Vec<(String, Option<TaskProgress>, Option<usize>, Option<u64>)> =
-            Vec::new();
+        let mut updates: Vec<PaneTaskUpdate> = Vec::new();
         for group in &self.repo_groups {
             for (pane, _) in &group.panes {
                 active_pane_ids.insert(pane.pane_id.clone());
@@ -207,9 +235,8 @@ impl AppState {
                 } else {
                     None
                 };
-                let grace_expired = next_inactive_since.map_or(false, |since| {
-                    self.now.saturating_sub(since) >= INACTIVE_GRACE_SECS
-                });
+                let grace_expired = next_inactive_since
+                    .is_some_and(|since| self.now.saturating_sub(since) >= INACTIVE_GRACE_SECS);
 
                 let decision = if grace_expired && !progress.is_empty() && !progress.all_completed()
                 {
@@ -230,19 +257,19 @@ impl AppState {
                     TaskProgressDecision::Dismiss { total } => Some(total),
                     TaskProgressDecision::Skip => prior_state.task_dismissed_total,
                 };
-                updates.push((
-                    pane.pane_id.clone(),
-                    next_progress,
-                    next_dismissed_total,
-                    next_inactive_since,
-                ));
+                updates.push(PaneTaskUpdate {
+                    pane_id: pane.pane_id.clone(),
+                    progress: next_progress,
+                    dismissed_total: next_dismissed_total,
+                    inactive_since: next_inactive_since,
+                });
             }
         }
-        for (pane_id, progress, dismissed_total, inactive_since) in updates {
-            let pane_state = self.pane_state_mut(&pane_id);
-            pane_state.inactive_since = inactive_since;
-            pane_state.task_dismissed_total = dismissed_total;
-            pane_state.task_progress = progress;
+        for update in updates {
+            let pane_state = self.pane_state_mut(&update.pane_id);
+            pane_state.inactive_since = update.inactive_since;
+            pane_state.task_dismissed_total = update.dismissed_total;
+            pane_state.task_progress = update.progress;
         }
         self.pane_states
             .retain(|id, _| active_pane_ids.contains(id));
@@ -250,7 +277,11 @@ impl AppState {
 
     pub(crate) fn refresh_activity_log(&mut self) {
         if let Some(ref pane_id) = self.focused_pane_id {
-            self.activity_entries = activity::read_activity_log(pane_id, self.activity_max_entries);
+            // Task-reset markers are internal bookkeeping for parse_task_progress;
+            // they should never appear in the user-facing Activity tab.
+            let mut entries = activity::read_activity_log(pane_id, self.activity_max_entries);
+            entries.retain(|e| e.tool != activity::TASK_RESET_MARKER);
+            self.activity_entries = entries;
         } else {
             self.activity_entries.clear();
         }
@@ -280,6 +311,9 @@ mod tests {
             pane_pid: None,
             worktree_name: String::new(),
             worktree_branch: String::new(),
+            session_id: None,
+            session_name: String::new(),
+            sidebar_spawned: false,
         }
     }
 
@@ -317,5 +351,88 @@ mod tests {
         let filtered = AppState::filter_sessions_to_live_agent_panes(sessions, &live);
 
         assert!(filtered.is_empty());
+    }
+
+    // ─── refresh_session_names ──────────────────────────────────────
+    //
+    // refresh_session_names no longer scans the filesystem itself; it
+    // only consumes the cached `session_names` map populated by the
+    // dedicated polling thread in `main.rs`. These tests pin that
+    // contract: the function must apply the cached snapshot to every
+    // pane and clear stale labels for panes whose session_id is no
+    // longer in the map.
+
+    fn pane_with_session(id: &str, session_id: &str) -> PaneInfo {
+        let mut p = test_pane(id);
+        p.session_id = Some(session_id.to_string());
+        p
+    }
+
+    fn state_with_panes(panes: Vec<PaneInfo>) -> AppState {
+        let mut state = AppState::new("%99".into());
+        state.repo_groups = vec![crate::group::RepoGroup {
+            name: "test".into(),
+            has_focus: true,
+            panes: panes
+                .into_iter()
+                .map(|p| (p, crate::group::PaneGitInfo::default()))
+                .collect(),
+        }];
+        state
+    }
+
+    #[test]
+    fn refresh_session_names_applies_cached_map_to_panes() {
+        let mut state = state_with_panes(vec![
+            pane_with_session("%1", "sess-a"),
+            pane_with_session("%2", "sess-b"),
+        ]);
+        state.session_names.insert("sess-a".into(), "alpha".into());
+        state.session_names.insert("sess-b".into(), "beta".into());
+
+        state.refresh_session_names();
+
+        let names: Vec<&str> = state.repo_groups[0]
+            .panes
+            .iter()
+            .map(|(p, _)| p.session_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn refresh_session_names_clears_stale_label_when_session_id_missing() {
+        // Pane already has a label from a previous tick, but its
+        // session_id no longer appears in the cached map (e.g. the
+        // session JSON file was deleted). The label must be cleared so
+        // the UI does not show a name for a session that is gone.
+        let mut state = state_with_panes(vec![pane_with_session("%1", "sess-gone")]);
+        state.repo_groups[0].panes[0].0.session_name = "old-label".into();
+        // session_names is empty — no entry for sess-gone.
+
+        state.refresh_session_names();
+
+        assert!(
+            state.repo_groups[0].panes[0].0.session_name.is_empty(),
+            "stale session_name must be cleared when the cache no longer has it"
+        );
+    }
+
+    #[test]
+    fn refresh_session_names_clears_label_for_pane_with_no_session_id() {
+        // Pane has a session_name set but no session_id (e.g. a
+        // non-Claude agent or a pane that has not reported one yet).
+        // The function must not preserve a label that no longer ties
+        // to a known session.
+        let mut state = state_with_panes(vec![test_pane("%1")]);
+        state.repo_groups[0].panes[0].0.session_name = "stray".into();
+        state.session_names.insert("sess-a".into(), "alpha".into());
+
+        state.refresh_session_names();
+
+        assert!(
+            state.repo_groups[0].panes[0].0.session_name.is_empty(),
+            "pane without session_id must end up with an empty session_name"
+        );
     }
 }

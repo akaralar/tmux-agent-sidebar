@@ -89,13 +89,21 @@ pub fn group_panes_by_repo(sessions: &[crate::tmux::SessionInfo]) -> Vec<RepoGro
     for session in sessions {
         for window in &session.windows {
             for pane in &window.panes {
-                let mut git_info = git_cache
-                    .entry(pane.path.clone())
-                    .or_insert_with(|| resolve_pane_git_info(&pane.path))
-                    .clone();
+                // Cache the base git info per path. `get` first avoids a key
+                // clone on cache hits; misses fall through to `insert` which
+                // owns the key plus the (expensive) git-command lookup.
+                let mut git_info = match git_cache.get(pane.path.as_str()) {
+                    Some(cached) => cached.clone(),
+                    None => {
+                        let resolved = resolve_pane_git_info(&pane.path);
+                        git_cache.insert(pane.path.clone(), resolved.clone());
+                        resolved
+                    }
+                };
 
-                // Override with hook-provided worktree info (Claude Code provides this;
-                // Codex does not, so git-command detection remains as fallback)
+                // Override with hook-provided worktree info (Claude Code
+                // provides this; Codex does not, so the git-command base
+                // remains as fallback).
                 if !pane.worktree_name.is_empty() {
                     git_info.worktree_name = Some(pane.worktree_name.clone());
                     git_info.is_worktree = true;
@@ -105,10 +113,10 @@ pub fn group_panes_by_repo(sessions: &[crate::tmux::SessionInfo]) -> Vec<RepoGro
                     git_info.is_worktree = true;
                 }
 
-                let group_key = git_info
-                    .repo_root
-                    .clone()
-                    .unwrap_or_else(|| pane.path.clone());
+                let group_key = match &git_info.repo_root {
+                    Some(root) => root.clone(),
+                    None => pane.path.clone(),
+                };
 
                 let display_name = group_key
                     .rsplit('/')
@@ -221,6 +229,9 @@ mod tests {
             pane_pid: None,
             worktree_name: String::new(),
             worktree_branch: String::new(),
+            session_id: None,
+            session_name: String::new(),
+            sidebar_spawned: false,
         }
     }
 
@@ -351,6 +362,43 @@ mod tests {
             2,
             "different repos across sessions should produce separate groups"
         );
+    }
+
+    #[test]
+    fn group_panes_same_repo_across_sessions_merge_into_one_group() {
+        // Regression for the `state.sessions` field removal: panes that
+        // live in different tmux sessions but share the same repo path
+        // must still collapse into a single `RepoGroup`. This is what
+        // makes the sidebar usable across multi-session workflows.
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let pane_session_a = test_pane("%1", manifest_dir);
+        let pane_session_b = test_pane("%2", manifest_dir);
+
+        let sessions = vec![
+            crate::tmux::SessionInfo {
+                session_name: "alpha".into(),
+                windows: vec![test_window(vec![pane_session_a], true)],
+            },
+            crate::tmux::SessionInfo {
+                session_name: "beta".into(),
+                windows: vec![test_window(vec![pane_session_b], false)],
+            },
+        ];
+        let groups = group_panes_by_repo(&sessions);
+
+        assert_eq!(
+            groups.len(),
+            1,
+            "panes in the same repo across sessions must merge into one group"
+        );
+        assert_eq!(groups[0].panes.len(), 2);
+        let pane_ids: Vec<&str> = groups[0]
+            .panes
+            .iter()
+            .map(|(p, _)| p.pane_id.as_str())
+            .collect();
+        assert!(pane_ids.contains(&"%1"));
+        assert!(pane_ids.contains(&"%2"));
     }
 
     #[test]

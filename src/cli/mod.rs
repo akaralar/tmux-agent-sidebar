@@ -1,6 +1,8 @@
 mod hook;
 mod label;
-mod setup;
+pub mod plugin_state;
+pub(crate) mod setup;
+mod spawn;
 mod toggle;
 
 use std::io::Read;
@@ -19,6 +21,7 @@ pub fn run(args: &[String]) -> Option<i32> {
         "toggle-all" => toggle::cmd_toggle_all(rest),
         "auto-close" => toggle::cmd_auto_close(rest),
         "set-status" => cmd_set_status(rest),
+        "spawn" => spawn::cmd_spawn(rest),
         "--version" | "version" => {
             println!("{}", crate::VERSION);
             0
@@ -77,7 +80,7 @@ fn set_attention(pane: &str, state: &str) {
 }
 
 fn sanitize_tmux_value(s: &str) -> String {
-    s.replace('\n', " ").replace('|', " ")
+    s.replace(['\n', '|'], " ")
 }
 
 // ─── set-status subcommand ──────────────────────────────────────────────────

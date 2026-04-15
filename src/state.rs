@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::activity::{ActivityEntry, TaskProgress};
-use crate::tmux::{self, SessionInfo};
+use crate::tmux;
 use crate::ui::colors::ColorTheme;
 use crate::ui::icons::StatusIcons;
 
@@ -63,7 +63,9 @@ impl StatusFilter {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    /// Parse a tmux-option label into a `StatusFilter`. Unknown values
+    /// fall back to `All`.
+    pub fn from_label(s: &str) -> Self {
         match s {
             "running" => Self::Running,
             "waiting" => Self::Waiting,
@@ -98,7 +100,9 @@ impl RepoFilter {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    /// Parse a tmux-option label into a `RepoFilter`. `""` and `"all"`
+    /// map to `All`; any other value is stored as `Repo(name)`.
+    pub fn from_label(s: &str) -> Self {
         match s {
             "all" | "" => Self::All,
             name => Self::Repo(name.to_string()),
@@ -127,11 +131,140 @@ pub struct PaneRuntimeState {
     pub task_progress: Option<TaskProgress>,
     pub task_dismissed_total: Option<usize>,
     pub inactive_since: Option<u64>,
+    /// Last bottom tab the user selected while this pane was focused.
+    /// `None` until the user changes tabs at least once. Cleaned up
+    /// automatically by `prune_pane_states_to_current_panes` when the
+    /// pane disappears, so a relaunched pane starts fresh.
+    pub tab_pref: Option<BottomTab>,
 }
 
 #[derive(Debug, Clone)]
 pub struct RowTarget {
     pub pane_id: String,
+}
+
+/// Click target for the `+` button rendered at the right edge of each
+/// repo-group header in the agents panel. Clicking it opens the spawn
+/// modal prefilled for that repo.
+#[derive(Debug, Clone)]
+pub struct RepoSpawnTarget {
+    pub rect: ratatui::layout::Rect,
+    pub repo_name: String,
+    pub repo_root: String,
+}
+
+/// Click target for the red `×` rendered next to the branch of a
+/// sidebar-spawned pane. Clicking it opens the close-pane confirmation
+/// for that specific pane.
+#[derive(Debug, Clone)]
+pub struct SpawnRemoveTarget {
+    pub rect: ratatui::layout::Rect,
+    pub pane_id: String,
+}
+
+/// Focus target inside the spawn input popup. Tab / Shift+Tab / arrow
+/// keys cycle through these in order; only `Task` accepts text input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpawnField {
+    #[default]
+    Task,
+    Agent,
+    Mode,
+}
+
+impl SpawnField {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Task => Self::Agent,
+            Self::Agent => Self::Mode,
+            Self::Mode => Self::Task,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Task => Self::Mode,
+            Self::Agent => Self::Task,
+            Self::Mode => Self::Agent,
+        }
+    }
+}
+
+fn point_in_rect(row: u16, col: u16, rect: ratatui::layout::Rect) -> bool {
+    rect.contains(ratatui::layout::Position { x: col, y: row })
+}
+
+/// At-most-one popup state for the sidebar. The enum variant encodes
+/// both which popup is open and its per-popup data, so the "only one
+/// popup open at a time" invariant is checked by the type system.
+#[derive(Debug, Clone, Default)]
+pub enum PopupState {
+    #[default]
+    None,
+    Repo {
+        selected: usize,
+        area: Option<ratatui::layout::Rect>,
+    },
+    Notices {
+        area: Option<ratatui::layout::Rect>,
+    },
+    /// Modal text input shown when the user presses `n` (or clicks `+`)
+    /// to spawn a new worktree. `target_repo` / `target_repo_root` pin
+    /// the spawn target; `agent_idx` / `mode_idx` index into
+    /// [`crate::worktree::AGENTS`] / [`crate::worktree::modes_for`] so
+    /// arrow keys can cycle the user's agent and permission-mode picks.
+    SpawnInput {
+        input: String,
+        target_repo: String,
+        target_repo_root: String,
+        agent_idx: usize,
+        mode_idx: usize,
+        field: SpawnField,
+        /// Screen Y of the repo header row that owns the `+` button
+        /// this modal was opened from. Renderer anchors the popup just
+        /// below it; `None` falls back to a centered layout.
+        anchor_y: Option<u16>,
+        /// Inline error message rendered at the bottom of the popup
+        /// so spawn failures stay visually attached to the input the
+        /// user was editing. Cleared on the next edit / field change.
+        error: Option<String>,
+        area: Option<ratatui::layout::Rect>,
+    },
+    /// Confirmation prompt shown when the user presses `x` on a
+    /// spawn-created pane. `pane_id` feeds `worktree::remove`; `branch`
+    /// is shown in the modal title.
+    RemoveConfirm {
+        pane_id: String,
+        branch: String,
+        error: Option<String>,
+        area: Option<ratatui::layout::Rect>,
+    },
+}
+
+impl PopupState {
+    pub fn set_repo_area(&mut self, rect: Option<ratatui::layout::Rect>) {
+        if let Self::Repo { area, .. } = self {
+            *area = rect;
+        }
+    }
+
+    pub fn set_notices_area(&mut self, rect: Option<ratatui::layout::Rect>) {
+        if let Self::Notices { area } = self {
+            *area = rect;
+        }
+    }
+
+    pub fn set_spawn_input_area(&mut self, rect: Option<ratatui::layout::Rect>) {
+        if let Self::SpawnInput { area, .. } = self {
+            *area = rect;
+        }
+    }
+
+    pub fn set_remove_confirm_area(&mut self, rect: Option<ratatui::layout::Rect>) {
+        if let Self::RemoveConfirm { area, .. } = self {
+            *area = rect;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -161,6 +294,12 @@ pub struct GlobalState {
     last_saved_cursor: usize,
     /// Last repo filter value successfully written to tmux.
     last_saved_repo_filter: RepoFilter,
+}
+
+impl Default for GlobalState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GlobalState {
@@ -223,7 +362,7 @@ impl GlobalState {
     /// Apply all global options from tmux (filter, cursor, repo filter).
     pub fn apply_all(&mut self, opts: &HashMap<String, String>) {
         if let Some(filter_str) = opts.get("@sidebar_filter") {
-            let tmux_filter = StatusFilter::from_str(filter_str);
+            let tmux_filter = StatusFilter::from_label(filter_str);
             if tmux_filter != self.last_saved_filter {
                 self.status_filter = tmux_filter;
                 self.last_saved_filter = tmux_filter;
@@ -237,7 +376,7 @@ impl GlobalState {
             self.last_saved_cursor = n;
         }
         if let Some(repo_str) = opts.get("@sidebar_repo_filter") {
-            let tmux_repo = RepoFilter::from_str(repo_str);
+            let tmux_repo = RepoFilter::from_label(repo_str);
             if tmux_repo != self.last_saved_repo_filter {
                 self.repo_filter = tmux_repo.clone();
                 self.last_saved_repo_filter = tmux_repo;
@@ -246,20 +385,123 @@ impl GlobalState {
     }
 }
 
+/// Ephemeral render output cached for click hit-testing.
+///
+/// Every field here is **rewritten on every frame** by the UI layer and
+/// only read by event handlers (mouse/keyboard) before the next render.
+/// Bundling them under `state.layout` makes the "frame-scoped vs
+/// persistent state" boundary visible at a glance, since the rest of
+/// `AppState` only holds data that survives across frames.
+#[derive(Debug, Clone, Default)]
+pub struct FrameLayout {
+    /// Filtered pane list, in the order the UI rendered them. Index
+    /// matches `GlobalState::selected_pane_row`.
+    pub pane_row_targets: Vec<RowTarget>,
+    /// Maps each rendered text line in the agents panel back to a row in
+    /// `pane_row_targets`. `None` for header/blank lines that should not
+    /// route clicks to a pane.
+    pub line_to_row: Vec<Option<usize>>,
+    /// X column of the repo filter button in the secondary header. `None`
+    /// when the button is hidden. Used for click hit-testing.
+    pub repo_button_col: Option<u16>,
+    /// Click regions for the `[+]` spawn button rendered at the right
+    /// edge of each repo-group header. One entry per visible repo group.
+    pub repo_spawn_targets: Vec<RepoSpawnTarget>,
+    /// Click regions for the red `×` remove marker rendered next to the
+    /// branch of each sidebar-spawned pane. One entry per visible row.
+    pub spawn_remove_targets: Vec<SpawnRemoveTarget>,
+    /// OSC 8 hyperlink overlays the main loop writes after each frame so
+    /// terminals can recognise PR numbers as clickable links.
+    pub hyperlink_overlays: Vec<HyperlinkOverlay>,
+}
+
+/// Periodic-refresh bookkeeping. Bundles the wall/monotonic clocks that
+/// gate refresh cadence in `state/refresh.rs` (port scan, filter-bar
+/// debounce, and the "first port scan completed" flag) so they live as
+/// a unit instead of cluttering [`AppState`].
+///
+/// `session_names` is intentionally NOT here: the polling lives in a
+/// dedicated background thread (`session_poll_loop` in `main.rs`) so the
+/// TUI thread never performs blocking filesystem I/O.
+#[derive(Debug, Clone)]
+pub struct RefreshTimers {
+    /// Last time a mouse click was processed on the filter bar (debounce).
+    pub last_filter_click: Instant,
+    /// Timestamp of the last port/command scan.
+    pub last_port_refresh: Instant,
+    /// Whether the first port scan has completed; the first scan must
+    /// always run regardless of the elapsed-time gate.
+    pub port_scan_initialized: bool,
+}
+
+impl Default for RefreshTimers {
+    fn default() -> Self {
+        let now = Instant::now();
+        Self {
+            last_filter_click: now,
+            last_port_refresh: now,
+            port_scan_initialized: false,
+        }
+    }
+}
+
+/// Sub-state for the ⓘ notices popup, lifted out of [`AppState`] so its
+/// seven related fields (button column, missing-hook groups, plugin
+/// version, legacy hook flag, plugin notice, copy targets, copy feedback)
+/// travel as a single unit.
+#[derive(Debug, Clone, Default)]
+pub struct NoticesState {
+    /// Column of the ⓘ button in the secondary header, or `None` when the
+    /// button is hidden. Used for click hit-testing.
+    pub button_col: Option<u16>,
+    /// Missing hooks grouped per agent, shown in the "Missing hooks"
+    /// section of the popup.
+    pub missing_hook_groups: Vec<NoticesMissingHookGroup>,
+    /// Version of the `tmux-agent-sidebar` Claude Code plugin install
+    /// detected at sidebar startup, or `None` when the plugin is not
+    /// installed. Resolved once from
+    /// `~/.claude/plugins/installed_plugins.json` and cached for the
+    /// lifetime of the TUI process — restart the sidebar after a
+    /// `/plugin install` or `/plugin uninstall` to pick up the change.
+    /// `claude_plugin_notice` and the missing-hooks Claude filter are
+    /// derived from this field.
+    pub claude_plugin_installed_version: Option<String>,
+    /// Whether `~/.claude/settings.json` still contains residual
+    /// `tmux-agent-sidebar/hook.sh` entries from the legacy manual
+    /// setup. Resolved once at startup. When this is `true` AND the
+    /// plugin is installed, every hook fires twice and the popup must
+    /// keep nagging the user to clean up.
+    pub claude_settings_has_residual_hooks: bool,
+    /// Drives the `Plugin / claude` section in the notices popup. See
+    /// [`ClaudePluginNotice`] for the two states. Derived from
+    /// `claude_plugin_installed_version` in `refresh_notices`.
+    pub claude_plugin_notice: Option<ClaudePluginNotice>,
+    /// Click regions for the `copy` label on each agent row in the popup.
+    pub copy_targets: Vec<NoticesCopyTarget>,
+    /// Agent name and timestamp of the most recent successful copy, shown
+    /// as a transient `copied` label next to the popup title.
+    pub copied_at: Option<(String, Instant)>,
+}
+
 pub struct AppState {
     pub now: u64,
-    pub sessions: Vec<SessionInfo>,
     pub repo_groups: Vec<crate::group::RepoGroup>,
     pub sidebar_focused: bool,
     pub focus: Focus,
+    /// Transient one-line status banner (message + expiry) for spawn /
+    /// remove feedback. Cleared by `take_flash` once the deadline passes.
+    pub flash: Option<(String, Instant)>,
     pub spinner_frame: usize,
-    pub pane_row_targets: Vec<RowTarget>,
+    /// Frame-scoped render output (pane_row_targets, line_to_row,
+    /// repo_button_col, hyperlink_overlays). Rewritten every frame by
+    /// the UI layer; consumed by mouse/keyboard handlers before the
+    /// next render.
+    pub layout: FrameLayout,
     pub activity_entries: Vec<ActivityEntry>,
     pub activity_scroll: ScrollState,
     pub focused_pane_id: Option<String>,
     pub tmux_pane: String,
     pub activity_max_entries: usize,
-    pub line_to_row: Vec<Option<usize>>,
     pub panes_scroll: ScrollState,
     pub theme: ColorTheme,
     pub icons: StatusIcons,
@@ -269,16 +511,23 @@ pub struct AppState {
     pub pane_states: HashMap<String, PaneRuntimeState>,
     /// Agent pane IDs that have already been seen.
     pub seen_agent_panes: std::collections::HashSet<String>,
-    /// Per-pane bottom tab preference.
-    pub pane_tab_prefs: HashMap<String, BottomTab>,
     /// Previous focused pane ID, used to detect focus changes.
     pub prev_focused_pane_id: Option<String>,
-    /// Last time a mouse click was processed on the filter bar (for debounce).
-    pub last_filter_click: std::time::Instant,
-    pub repo_popup_open: bool,
-    pub repo_popup_selected: usize,
-    pub repo_popup_area: Option<ratatui::layout::Rect>,
-    pub repo_button_col: Option<u16>,
+    /// Periodic-refresh clocks (port scan, session-name scan, filter
+    /// debounce, port-scan first-run flag).
+    pub timers: RefreshTimers,
+    /// Current popup state. At most one popup is open at a time; the enum
+    /// variant encodes both which popup is open and its per-popup data.
+    pub popup: PopupState,
+    /// All fields related to the ⓘ notices button and its popup — the button
+    /// click region, cached hook/plugin diagnostics, per-agent copy targets,
+    /// and the transient "copied" feedback label.
+    pub notices: NoticesState,
+    /// Pending OSC 52 clipboard payload. The main loop flushes this to
+    /// stdout after the next frame so tmux (with `set-clipboard on`) can
+    /// forward it to the upstream terminal's clipboard — covering the
+    /// SSH case where `arboard` would only reach the remote machine.
+    pub pending_osc52_copy: Option<String>,
     pub mascot_state: crate::ui::mascot::MascotState,
     /// Mascot animation X position (character offset from left of bottom panel).
     pub mascot_x: u16,
@@ -319,13 +568,12 @@ pub struct AppState {
     pub version_notice: Option<crate::version::UpdateNotice>,
     /// Shared state across sidebar instances, persisted to tmux global variables.
     pub global: GlobalState,
-    /// Hyperlink overlays to be written after frame render (OSC 8).
-    pub hyperlink_overlays: Vec<HyperlinkOverlay>,
-    pub port_scan_initialized: bool,
-    pub last_port_refresh: Instant,
     /// Height of the bottom panel in lines. Loaded once at startup from
     /// the `@sidebar_bottom_height` tmux option. A value of 0 hides the panel.
     pub bottom_panel_height: u16,
+    /// Maps session_id → session name, refreshed periodically from
+    /// `~/.claude/sessions/*.json` files.
+    pub session_names: HashMap<String, String>,
     /// Whether the mascot animation is drawn and ticked. Loaded once at startup
     /// from the `@sidebar_mascot` tmux option. Defaults to `false`.
     pub mascot_enabled: bool,
@@ -338,6 +586,43 @@ pub struct HyperlinkOverlay {
     pub y: u16,
     pub text: String,
     pub url: String,
+}
+
+/// Missing hooks grouped by agent name.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NoticesMissingHookGroup {
+    pub agent: String,
+    pub hooks: Vec<String>,
+}
+
+/// Notice surfaced in the popup's `Plugin / claude` section. The
+/// variants are mutually exclusive and ordered by urgency:
+/// `DuplicateHooks` > `InstallRecommended` > `Stale`. When the plugin
+/// is installed, current, and the user has no residual manual hook
+/// entries, no notice is set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaudePluginNotice {
+    /// The Claude Code plugin is not installed. The popup offers a
+    /// `[prompt]` copy button that hands an LLM the migration recipe
+    /// (clean up `~/.claude/settings.json` then run `/plugin install`).
+    InstallRecommended,
+    /// The plugin is installed AND the user still has legacy
+    /// `tmux-agent-sidebar/hook.sh` entries in `~/.claude/settings.json`.
+    /// Every hook fires twice in this state — once via the plugin, once
+    /// via the manual setting. Takes precedence over `Stale` because it
+    /// is an actively-broken state, not just a pending update.
+    DuplicateHooks,
+    /// The plugin is installed but its `plugin.json` version is older
+    /// than the running binary, so the user needs to restart Claude
+    /// Code to pick up the new bundled hooks.
+    Stale { installed: String, current: String },
+}
+
+/// Click target for the `copy` label next to an agent in the notices popup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoticesCopyTarget {
+    pub area: ratatui::layout::Rect,
+    pub agent: String,
 }
 
 fn reseed_mascot_idle_motion(state: &mut AppState) {
@@ -389,18 +674,17 @@ impl AppState {
     pub fn new(tmux_pane: String) -> Self {
         let mut state = Self {
             now: 0,
-            sessions: vec![],
             repo_groups: vec![],
             sidebar_focused: false,
             focus: Focus::Panes,
+            flash: None,
             spinner_frame: 0,
-            pane_row_targets: vec![],
+            layout: FrameLayout::default(),
             activity_entries: vec![],
             activity_scroll: ScrollState::default(),
             focused_pane_id: None,
             tmux_pane,
             activity_max_entries: 50,
-            line_to_row: vec![],
             panes_scroll: ScrollState::default(),
             theme: ColorTheme::default(),
             icons: StatusIcons::default(),
@@ -409,13 +693,11 @@ impl AppState {
             git_scroll: ScrollState::default(),
             pane_states: HashMap::new(),
             seen_agent_panes: std::collections::HashSet::new(),
-            pane_tab_prefs: HashMap::new(),
             prev_focused_pane_id: None,
-            last_filter_click: std::time::Instant::now(),
-            repo_popup_open: false,
-            repo_popup_selected: 0,
-            repo_popup_area: None,
-            repo_button_col: None,
+            timers: RefreshTimers::default(),
+            popup: PopupState::None,
+            notices: NoticesState::default(),
+            pending_osc52_copy: None,
             mascot_state: crate::ui::mascot::MascotState::Idle,
             mascot_x: crate::ui::mascot::MASCOT_HOME_X,
             mascot_frame: 0,
@@ -437,10 +719,8 @@ impl AppState {
             mascot_working_paper_seed: 1,
             version_notice: None,
             global: GlobalState::new(),
-            hyperlink_overlays: vec![],
-            port_scan_initialized: false,
-            last_port_refresh: Instant::now(),
             bottom_panel_height: crate::ui::BOTTOM_PANEL_HEIGHT,
+            session_names: HashMap::new(),
             mascot_enabled: false,
         };
         reseed_mascot_idle_motion(&mut state);
@@ -453,6 +733,25 @@ impl AppState {
 
     pub fn pane_state(&self, pane_id: &str) -> Option<&PaneRuntimeState> {
         self.pane_states.get(pane_id)
+    }
+
+    pub fn pane_by_id(&self, pane_id: &str) -> Option<&crate::tmux::PaneInfo> {
+        for group in &self.repo_groups {
+            for (pane, _) in &group.panes {
+                if pane.pane_id == pane_id {
+                    return Some(pane);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn selected_pane(&self) -> Option<&crate::tmux::PaneInfo> {
+        let target = self
+            .layout
+            .pane_row_targets
+            .get(self.global.selected_pane_row)?;
+        self.pane_by_id(&target.pane_id)
     }
 
     pub fn set_pane_ports(&mut self, pane_id: &str, ports: Vec<u16>) {
@@ -501,6 +800,461 @@ impl AppState {
         self.pane_states.remove(pane_id);
     }
 
+    /// Resolve the notices popup inputs once.
+    ///
+    /// Every input is static for the sidebar's lifetime:
+    /// `claude_plugin_installed_version` and
+    /// `claude_settings_has_residual_hooks` are resolved at `main.rs`
+    /// startup, and `settings.json` / `hooks.json` edits only take
+    /// effect after a sidebar restart — matching the restart-required
+    /// contract already documented for `/plugin install`. So this runs
+    /// once from `main.rs` instead of being pinned to the per-tick
+    /// refresh loop, and the ⓘ badge no longer depends on which pane
+    /// happens to be focused.
+    ///
+    /// Both Claude and Codex are always evaluated so a user who closes
+    /// their last agent pane still sees any outstanding hook setup
+    /// warnings.
+    pub fn refresh_notices(&mut self) {
+        self.notices.claude_plugin_notice = compute_claude_plugin_notice(
+            self.notices.claude_plugin_installed_version.as_deref(),
+            crate::VERSION,
+            self.notices.claude_settings_has_residual_hooks,
+        );
+
+        // Suppress Claude from the missing-hooks list whenever the
+        // plugin is installed. Residual legacy entries are already
+        // surfaced by the Plugin section's `DuplicateHooks` notice, so
+        // re-adding Claude here would only duplicate the warning.
+        let claude_plugin_present = self.notices.claude_plugin_installed_version.is_some();
+
+        let resolved_hook = crate::cli::setup::resolve_hook_script();
+        let force_missing = debug_forced_display();
+        let load_config = |agent: &str| -> serde_json::Value {
+            if force_missing {
+                serde_json::Value::Null
+            } else {
+                crate::cli::setup::load_current_config(agent)
+            }
+        };
+        // When `resolve_hook_script` could not actually locate the
+        // installed `hook.sh` it returns a fallback path that is unlikely
+        // to match what the user wrote in their config. Verifying against
+        // that fallback would flag every custom install as "Missing hooks"
+        // — skip the check unless detection succeeded (debug overrides
+        // still force the warning so the popup remains testable).
+        self.notices.missing_hook_groups = if force_missing || resolved_hook.detected {
+            compute_missing_hook_groups(
+                claude_plugin_present,
+                vec![
+                    crate::tmux::CLAUDE_AGENT.to_string(),
+                    crate::tmux::CODEX_AGENT.to_string(),
+                ],
+                &resolved_hook.path,
+                load_config,
+            )
+        } else {
+            Vec::new()
+        };
+    }
+
+    pub fn is_repo_popup_open(&self) -> bool {
+        matches!(self.popup, PopupState::Repo { .. })
+    }
+
+    pub fn is_notices_popup_open(&self) -> bool {
+        matches!(self.popup, PopupState::Notices { .. })
+    }
+
+    pub fn repo_popup_selected(&self) -> usize {
+        match &self.popup {
+            PopupState::Repo { selected, .. } => *selected,
+            _ => 0,
+        }
+    }
+
+    pub fn set_repo_popup_selected(&mut self, n: usize) {
+        if let PopupState::Repo { selected, .. } = &mut self.popup {
+            *selected = n;
+        }
+    }
+
+    pub fn repo_popup_area(&self) -> Option<ratatui::layout::Rect> {
+        match &self.popup {
+            PopupState::Repo { area, .. } => *area,
+            _ => None,
+        }
+    }
+
+    pub fn spawn_input_popup_area(&self) -> Option<ratatui::layout::Rect> {
+        match &self.popup {
+            PopupState::SpawnInput { area, .. } => *area,
+            _ => None,
+        }
+    }
+
+    pub fn remove_confirm_popup_area(&self) -> Option<ratatui::layout::Rect> {
+        match &self.popup {
+            PopupState::RemoveConfirm { area, .. } => *area,
+            _ => None,
+        }
+    }
+
+    pub fn notices_popup_area(&self) -> Option<ratatui::layout::Rect> {
+        match &self.popup {
+            PopupState::Notices { area } => *area,
+            _ => None,
+        }
+    }
+
+    pub fn toggle_notices_popup(&mut self) {
+        if self.is_notices_popup_open() {
+            self.close_notices_popup();
+        } else {
+            self.popup = PopupState::Notices { area: None };
+        }
+    }
+
+    pub fn close_notices_popup(&mut self) {
+        self.popup = PopupState::None;
+        self.notices.copy_targets.clear();
+        self.notices.copied_at = None;
+    }
+
+    // ─── Spawn input popup (n key / + click) ─────────────────────────────
+
+    pub fn is_spawn_input_open(&self) -> bool {
+        matches!(self.popup, PopupState::SpawnInput { .. })
+    }
+
+    pub fn open_spawn_input_for_repo(
+        &mut self,
+        repo_name: String,
+        repo_root: String,
+        anchor_y: Option<u16>,
+    ) {
+        self.popup = PopupState::SpawnInput {
+            input: String::new(),
+            target_repo: repo_name,
+            target_repo_root: repo_root,
+            agent_idx: 0,
+            mode_idx: 0,
+            field: SpawnField::Task,
+            anchor_y,
+            error: None,
+            area: None,
+        };
+    }
+
+    pub fn open_spawn_input_from_selection(&mut self) {
+        let Some(pane) = self.selected_pane() else {
+            self.set_flash("spawn: no pane selected");
+            return;
+        };
+        let pane_id = pane.pane_id.clone();
+        let Some(group) = self
+            .repo_groups
+            .iter()
+            .find(|g| g.panes.iter().any(|(p, _)| p.pane_id == pane_id))
+        else {
+            self.set_flash("spawn: could not find repo group for selection");
+            return;
+        };
+        let Some(root) = group
+            .panes
+            .iter()
+            .find_map(|(_, git)| git.repo_root.clone())
+        else {
+            self.set_flash("spawn: selected pane is not in a git repo");
+            return;
+        };
+        let name = group.name.clone();
+        // Anchor the popup directly below the repo header row so it
+        // matches what the mouse `+` click flow does.
+        let anchor = self
+            .layout
+            .repo_spawn_targets
+            .iter()
+            .find(|t| t.repo_name == name)
+            .map(|t| t.rect.y);
+        self.open_spawn_input_for_repo(name, root, anchor);
+    }
+
+    pub fn close_spawn_input(&mut self) {
+        if matches!(self.popup, PopupState::SpawnInput { .. }) {
+            self.popup = PopupState::None;
+        }
+    }
+
+    pub fn spawn_input_next_field(&mut self) {
+        if let PopupState::SpawnInput { field, error, .. } = &mut self.popup {
+            *field = field.next();
+            *error = None;
+        }
+    }
+
+    pub fn spawn_input_prev_field(&mut self) {
+        if let PopupState::SpawnInput { field, error, .. } = &mut self.popup {
+            *field = field.prev();
+            *error = None;
+        }
+    }
+
+    /// Cycle the value under the focused agent or mode field. No-op on
+    /// the task input field so typing isn't interfered with.
+    pub fn spawn_input_cycle(&mut self, delta: isize) {
+        let PopupState::SpawnInput {
+            field,
+            agent_idx,
+            mode_idx,
+            error,
+            ..
+        } = &mut self.popup
+        else {
+            return;
+        };
+        match *field {
+            SpawnField::Agent => {
+                let len = crate::worktree::AGENTS.len() as isize;
+                *agent_idx = ((*agent_idx as isize + delta).rem_euclid(len)) as usize;
+                // Mode list is agent-specific.
+                *mode_idx = 0;
+                *error = None;
+            }
+            SpawnField::Mode => {
+                let agent = crate::worktree::AGENTS
+                    .get(*agent_idx)
+                    .copied()
+                    .unwrap_or("");
+                let len = crate::worktree::modes_for(agent).len() as isize;
+                if len > 0 {
+                    *mode_idx = ((*mode_idx as isize + delta).rem_euclid(len)) as usize;
+                    *error = None;
+                }
+            }
+            SpawnField::Task => {}
+        }
+    }
+
+    pub fn spawn_input_push_char(&mut self, c: char) {
+        if let PopupState::SpawnInput {
+            input,
+            field,
+            error,
+            ..
+        } = &mut self.popup
+            && *field == SpawnField::Task
+        {
+            input.push(c);
+            *error = None;
+        }
+    }
+
+    pub fn spawn_input_pop_char(&mut self) {
+        if let PopupState::SpawnInput {
+            input,
+            field,
+            error,
+            ..
+        } = &mut self.popup
+            && *field == SpawnField::Task
+        {
+            input.pop();
+            *error = None;
+        }
+    }
+
+    fn set_spawn_error(&mut self, msg: impl Into<String>) {
+        if let PopupState::SpawnInput { error, .. } = &mut self.popup {
+            *error = Some(msg.into());
+        }
+    }
+
+    fn set_remove_error(&mut self, msg: impl Into<String>) {
+        if let PopupState::RemoveConfirm { error, .. } = &mut self.popup {
+            *error = Some(msg.into());
+        }
+    }
+
+    /// Run the spawn flow against the repo stored in the popup, using
+    /// the agent / mode the user picked. On success the popup closes
+    /// silently (the new window appearing in the sidebar is the
+    /// feedback). On failure the error is surfaced inside the popup
+    /// and the modal stays open so the user can retry.
+    pub fn confirm_spawn_input(&mut self) {
+        let PopupState::SpawnInput {
+            input,
+            target_repo_root,
+            agent_idx,
+            mode_idx,
+            ..
+        } = &self.popup
+        else {
+            return;
+        };
+        let task_name = input.trim().to_string();
+        if task_name.is_empty() {
+            self.set_spawn_error("name is empty");
+            return;
+        }
+        let agent = crate::worktree::AGENTS
+            .get(*agent_idx)
+            .copied()
+            .unwrap_or(crate::worktree::DEFAULT_AGENT)
+            .to_string();
+        let mode = crate::worktree::modes_for(&agent)
+            .get(*mode_idx)
+            .copied()
+            .unwrap_or(crate::worktree::DEFAULT_MODE)
+            .to_string();
+        let repo_root = std::path::PathBuf::from(target_repo_root.clone());
+
+        let Some(session) = crate::tmux::pane_session_name(&self.tmux_pane) else {
+            self.set_spawn_error("could not resolve tmux session");
+            return;
+        };
+
+        let req = crate::worktree::SpawnRequest {
+            repo_root,
+            task_name,
+            session,
+            agent,
+            mode,
+        };
+        match crate::worktree::spawn(&req) {
+            Ok(_) => self.popup = PopupState::None,
+            Err(e) => self.set_spawn_error(e),
+        }
+    }
+
+    // ─── Remove confirm popup (x key) ────────────────────────────────────
+
+    pub fn is_remove_confirm_open(&self) -> bool {
+        matches!(self.popup, PopupState::RemoveConfirm { .. })
+    }
+
+    pub fn close_remove_confirm(&mut self) {
+        if matches!(self.popup, PopupState::RemoveConfirm { .. }) {
+            self.popup = PopupState::None;
+        }
+    }
+
+    /// Open the remove confirmation popup for the currently selected pane,
+    /// but only if it was created by the sidebar's spawn flow. Otherwise
+    /// flashes an error so the user knows nothing happened.
+    pub fn open_remove_confirm(&mut self) {
+        let Some(pane) = self.selected_pane() else {
+            self.set_flash("remove: no pane selected");
+            return;
+        };
+        self.open_remove_confirm_for_pane(pane.pane_id.clone());
+    }
+
+    pub fn open_remove_confirm_for_pane(&mut self, pane_id: String) {
+        let markers = crate::worktree::read_spawn_markers(&pane_id);
+        if !markers.is_spawned() {
+            self.set_flash("remove: selected pane was not spawned by sidebar");
+            return;
+        }
+        let branch = std::path::Path::new(&markers.worktree_path)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.popup = PopupState::RemoveConfirm {
+            pane_id,
+            branch,
+            error: None,
+            area: None,
+        };
+    }
+
+    /// Run the remove flow on the pane stored in the confirmation popup.
+    /// Success silently closes the popup; failures are surfaced inside
+    /// the popup so the user can retry.
+    pub fn confirm_remove(&mut self, mode: crate::worktree::RemoveMode) {
+        let pane_id = match &self.popup {
+            PopupState::RemoveConfirm { pane_id, .. } => pane_id.clone(),
+            _ => return,
+        };
+        match crate::worktree::remove(&pane_id, mode) {
+            Ok(_) => self.popup = PopupState::None,
+            Err(e) => self.set_remove_error(e),
+        }
+    }
+
+    // ─── Flash banner ────────────────────────────────────────────────────
+
+    pub fn set_flash(&mut self, msg: impl Into<String>) {
+        self.flash = Some((
+            msg.into(),
+            Instant::now() + std::time::Duration::from_secs(4),
+        ));
+    }
+
+    /// Return the current flash text if still valid, clearing it once the
+    /// deadline passes. Called by the UI once per frame.
+    pub fn take_flash(&mut self) -> Option<String> {
+        match &self.flash {
+            Some((text, exp)) if Instant::now() < *exp => Some(text.clone()),
+            Some(_) => {
+                self.flash = None;
+                None
+            }
+            None => None,
+        }
+    }
+
+    /// Return the agent name if the given (row, col) hits a `[copy]` label
+    /// in the currently rendered notices popup. Pure lookup — no side effects.
+    pub fn notices_copy_target_at(&self, row: u16, col: u16) -> Option<&str> {
+        self.notices
+            .copy_targets
+            .iter()
+            .find(|t| {
+                row >= t.area.y
+                    && row < t.area.y + t.area.height
+                    && col >= t.area.x
+                    && col < t.area.x + t.area.width
+            })
+            .map(|t| t.agent.as_str())
+    }
+
+    /// Copy the LLM setup prompt for the given agent (`claude` / `codex`)
+    /// to every clipboard-reachable surface: `arboard` for the local OS
+    /// clipboard, `tmux set-buffer` for the tmux paste buffer, and a
+    /// queued OSC 52 escape (flushed by the main loop) for upstream
+    /// terminals over SSH. Returns true only when at least one *verifiable*
+    /// destination succeeded so the caller can decide whether to show the
+    /// `[copied]` feedback.
+    pub fn copy_notices_prompt(&mut self, agent: &str) -> bool {
+        let Some(prompt) = crate::ui::notices::prompt_for_agent(agent) else {
+            return false;
+        };
+        let clip_ok = arboard::Clipboard::new()
+            .and_then(|mut c| c.set_text(prompt.clone()))
+            .is_ok();
+        let tmux_ok = std::process::Command::new("tmux")
+            .args(["set-buffer", &prompt])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        // OSC 52 is queued regardless — it reaches the upstream terminal
+        // even when the local sinks above fail (SSH case). But we do not
+        // count it toward the feedback because there is no success signal.
+        self.pending_osc52_copy = Some(prompt);
+        self.record_notices_copy_result(agent, clip_ok || tmux_ok)
+    }
+
+    /// Stamp the `[copied]` feedback state. Pure separation from the I/O
+    /// above so the success policy is unit-testable without touching the
+    /// real clipboard or tmux.
+    pub fn record_notices_copy_result(&mut self, agent: &str, success: bool) -> bool {
+        if success {
+            self.notices.copied_at = Some((agent.to_string(), Instant::now()));
+        }
+        success
+    }
+
     pub fn prune_pane_states_to_current_panes(&mut self) {
         let mut active_ids = std::collections::HashSet::new();
         for group in &self.repo_groups {
@@ -522,35 +1276,38 @@ impl AppState {
     }
 
     pub fn rebuild_row_targets(&mut self) {
-        // Reset stale repo filter if the repo no longer exists
-        if let RepoFilter::Repo(ref name) = self.global.repo_filter {
-            if !self.repo_groups.iter().any(|g| g.name == *name) {
-                self.global.repo_filter = RepoFilter::All;
-            }
+        // Reset stale repo filter if the repo no longer exists, and
+        // persist the reset back to tmux so fresh sidebar instances do
+        // not reload the dead repo name on startup.
+        if let RepoFilter::Repo(ref name) = self.global.repo_filter
+            && !self.repo_groups.iter().any(|g| g.name == *name)
+        {
+            self.global.repo_filter = RepoFilter::All;
+            self.global.save_repo_filter();
         }
 
-        self.pane_row_targets.clear();
+        self.layout.pane_row_targets.clear();
         for group in &self.repo_groups {
             if !self.global.repo_filter.matches_group(&group.name) {
                 continue;
             }
             for (pane, _) in &group.panes {
                 if self.global.status_filter.matches(&pane.status) {
-                    self.pane_row_targets.push(RowTarget {
+                    self.layout.pane_row_targets.push(RowTarget {
                         pane_id: pane.pane_id.clone(),
                     });
                 }
             }
         }
-        if self.global.selected_pane_row >= self.pane_row_targets.len()
-            && !self.pane_row_targets.is_empty()
+        if self.global.selected_pane_row >= self.layout.pane_row_targets.len()
+            && !self.layout.pane_row_targets.is_empty()
         {
-            self.global.selected_pane_row = self.pane_row_targets.len() - 1;
+            self.global.selected_pane_row = self.layout.pane_row_targets.len() - 1;
         }
     }
 
     pub fn find_focused_pane(&mut self) {
-        // Query tmux directly for the active pane, not through self.sessions
+        // Query tmux directly for the active pane, not through `repo_groups`
         // which only contains agent panes. This allows activity/git info to
         // be displayed even when the focused pane has no agent running.
         // When the sidebar has focus, find_active_pane returns None — preserve
@@ -562,10 +1319,10 @@ impl AppState {
 
     /// Move agent selection. Returns true if moved, false if at boundary.
     pub fn move_pane_selection(&mut self, delta: isize) -> bool {
-        if self.pane_row_targets.is_empty() {
+        if self.layout.pane_row_targets.is_empty() {
             return false;
         }
-        let len = self.pane_row_targets.len() as isize;
+        let len = self.layout.pane_row_targets.len() as isize;
         let next = self.global.selected_pane_row as isize + delta;
         if next >= 0 && next < len {
             self.global.selected_pane_row = next as usize;
@@ -576,7 +1333,11 @@ impl AppState {
     }
 
     pub fn activate_selected_pane(&self) {
-        if let Some(target) = self.pane_row_targets.get(self.global.selected_pane_row) {
+        if let Some(target) = self
+            .layout
+            .pane_row_targets
+            .get(self.global.selected_pane_row)
+        {
             tmux::select_pane(&target.pane_id);
         }
     }
@@ -633,10 +1394,14 @@ impl AppState {
     pub fn handle_filter_click(&mut self, col: u16) {
         const DEBOUNCE_MS: u128 = 150;
         let now = std::time::Instant::now();
-        if now.duration_since(self.last_filter_click).as_millis() < DEBOUNCE_MS {
+        if now
+            .duration_since(self.timers.last_filter_click)
+            .as_millis()
+            < DEBOUNCE_MS
+        {
             return;
         }
-        self.last_filter_click = now;
+        self.timers.last_filter_click = now;
 
         let (_, running, waiting, idle, error) = self.status_counts();
         // Layout: " All  ●N  ◐N  ○N  ✕N"
@@ -650,14 +1415,6 @@ impl AppState {
             (StatusFilter::Error, 1 + format!("{error}").len()),
         ];
         let col = col as usize;
-        // Check if click is on repo button (right side)
-        if self
-            .repo_button_col
-            .is_some_and(|repo_button_col| col >= repo_button_col as usize)
-        {
-            self.toggle_repo_popup();
-            return;
-        }
         for (i, (filter, width)) in items.iter().enumerate() {
             if i > 0 {
                 x += 2; // "  " separator
@@ -672,30 +1429,72 @@ impl AppState {
         }
     }
 
+    /// Handle mouse click on the secondary header row (row 1).
+    /// The repo filter button lives on the far right of this row.
+    pub fn handle_secondary_header_click(&mut self, col: u16) {
+        if self
+            .notices
+            .button_col
+            .is_some_and(|notices_col| col == notices_col)
+        {
+            self.toggle_notices_popup();
+            return;
+        }
+        if self
+            .layout
+            .repo_button_col
+            .is_some_and(|repo_button_col| col >= repo_button_col)
+        {
+            self.toggle_repo_popup();
+        }
+    }
+
     /// Handle mouse click in agents panel. Maps screen row to agent row
     /// via line_to_row (adjusted for scroll offset) and activates that pane.
     /// Row 0 is the fixed filter bar, row 1+ maps to the scrollable agent list.
     pub fn handle_mouse_click(&mut self, row: u16, col: u16) {
-        // Handle popup interactions first
-        if self.repo_popup_open {
-            if let Some(popup_area) = self.repo_popup_area {
-                if row >= popup_area.y
-                    && row < popup_area.y + popup_area.height
-                    && col >= popup_area.x
-                    && col < popup_area.x + popup_area.width
-                {
-                    // Click inside popup — select item (subtract 1 for top border)
-                    let item_index = (row - popup_area.y).saturating_sub(1) as usize;
-                    let repos = self.repo_names();
-                    if item_index < repos.len() {
-                        self.repo_popup_selected = item_index;
-                        self.confirm_repo_popup();
-                    }
-                    return;
+        if self.is_notices_popup_open() {
+            if let Some(area) = self.notices_popup_area()
+                && point_in_rect(row, col, area)
+            {
+                if let Some(agent) = self.notices_copy_target_at(row, col).map(str::to_string) {
+                    self.copy_notices_prompt(&agent);
                 }
+                return;
             }
-            // Click outside popup — close it
+            self.close_notices_popup();
+            return;
+        }
+        if self.is_repo_popup_open() {
+            if let Some(area) = self.repo_popup_area()
+                && point_in_rect(row, col, area)
+            {
+                let item_index = (row - area.y).saturating_sub(1) as usize;
+                if item_index < self.repo_names().len() {
+                    self.set_repo_popup_selected(item_index);
+                    self.confirm_repo_popup();
+                }
+                return;
+            }
             self.close_repo_popup();
+            return;
+        }
+        if self.is_spawn_input_open() {
+            if let Some(area) = self.spawn_input_popup_area()
+                && point_in_rect(row, col, area)
+            {
+                return;
+            }
+            self.close_spawn_input();
+            return;
+        }
+        if self.is_remove_confirm_open() {
+            if let Some(area) = self.remove_confirm_popup_area()
+                && point_in_rect(row, col, area)
+            {
+                return;
+            }
+            self.close_remove_confirm();
             return;
         }
 
@@ -703,8 +1502,38 @@ impl AppState {
             self.handle_filter_click(col);
             return;
         }
-        let line_index = (row as usize - 1) + self.panes_scroll.offset;
-        if let Some(Some(agent_row)) = self.line_to_row.get(line_index) {
+        if row == 1 {
+            self.handle_secondary_header_click(col);
+            return;
+        }
+
+        // Check the `+` spawn buttons before the pane-row fallback so a
+        // click on the button doesn't also shift the pane selection.
+        if let Some((repo_name, repo_root, anchor_y)) = self
+            .layout
+            .repo_spawn_targets
+            .iter()
+            .find(|t| point_in_rect(row, col, t.rect))
+            .map(|t| (t.repo_name.clone(), t.repo_root.clone(), t.rect.y))
+        {
+            self.open_spawn_input_for_repo(repo_name, repo_root, Some(anchor_y));
+            return;
+        }
+
+        // Check the red `×` remove markers next to spawn-created branches.
+        if let Some(pane_id) = self
+            .layout
+            .spawn_remove_targets
+            .iter()
+            .find(|t| point_in_rect(row, col, t.rect))
+            .map(|t| t.pane_id.clone())
+        {
+            self.open_remove_confirm_for_pane(pane_id);
+            return;
+        }
+
+        let line_index = (row as usize - 2) + self.panes_scroll.offset;
+        if let Some(Some(agent_row)) = self.layout.line_to_row.get(line_index) {
             self.global.selected_pane_row = *agent_row;
             self.global.save_cursor();
             self.activate_selected_pane();
@@ -746,33 +1575,39 @@ impl AppState {
     }
 
     pub fn toggle_repo_popup(&mut self) {
-        self.repo_popup_open = !self.repo_popup_open;
-        if self.repo_popup_open {
-            // Set selected to current filter position
-            let names = self.repo_names();
-            self.repo_popup_selected = match &self.global.repo_filter {
-                RepoFilter::All => 0,
-                RepoFilter::Repo(name) => names.iter().position(|n| n == name).unwrap_or(0),
-            };
+        if self.is_repo_popup_open() {
+            self.close_repo_popup();
+            return;
         }
+        // Set selected to current filter position
+        let names = self.repo_names();
+        let selected = match &self.global.repo_filter {
+            RepoFilter::All => 0,
+            RepoFilter::Repo(name) => names.iter().position(|n| n == name).unwrap_or(0),
+        };
+        self.popup = PopupState::Repo {
+            selected,
+            area: None,
+        };
     }
 
     pub fn confirm_repo_popup(&mut self) {
+        let selected = self.repo_popup_selected();
         let names = self.repo_names();
-        if let Some(name) = names.get(self.repo_popup_selected) {
-            self.global.repo_filter = if self.repo_popup_selected == 0 {
+        if let Some(name) = names.get(selected) {
+            self.global.repo_filter = if selected == 0 {
                 RepoFilter::All
             } else {
                 RepoFilter::Repo(name.clone())
             };
         }
-        self.repo_popup_open = false;
+        self.popup = PopupState::None;
         self.global.save_repo_filter();
         self.rebuild_row_targets();
     }
 
     pub fn close_repo_popup(&mut self) {
-        self.repo_popup_open = false;
+        self.popup = PopupState::None;
     }
 
     /// Advance mascot animation state. Called every spinner tick (200ms).
@@ -859,7 +1694,7 @@ impl AppState {
                     reseed_mascot_working_paper_motion(self);
                 }
                 self.mascot_working_frame_tick = self.mascot_working_frame_tick.saturating_add(1);
-                if self.mascot_working_frame_tick % 2 == 0 {
+                if self.mascot_working_frame_tick.is_multiple_of(2) {
                     self.mascot_frame = match self.mascot_frame {
                         1 => 2,
                         2 => 3,
@@ -925,6 +1760,71 @@ impl AppState {
     }
 }
 
+/// Compute the per-agent missing-hook list shown in the notices popup.
+///
+/// `claude_plugin_present` gates Claude visibility: when the plugin is
+/// installed, it owns the hook wiring so Claude is filtered out (the
+/// `Plugin / claude` section reports stale-version state instead). When
+/// the plugin is **not** installed, Claude must surface concrete
+/// missing-hook diagnostics for users still on the manual
+/// `~/.claude/settings.json` path. Codex is unaffected — Codex CLI has
+/// no plugin mechanism upstream.
+///
+/// Pure function: takes the agent list and a config loader as inputs so
+/// tests do not need to manipulate `/tmp` files or `~/.claude/`.
+fn compute_missing_hook_groups(
+    claude_plugin_present: bool,
+    agents: Vec<String>,
+    hook_script: &str,
+    load_config: impl Fn(&str) -> serde_json::Value,
+) -> Vec<NoticesMissingHookGroup> {
+    agents
+        .into_iter()
+        .filter(|agent| !(claude_plugin_present && agent == "claude"))
+        .filter_map(|agent| {
+            let config = load_config(&agent);
+            let hooks = crate::cli::setup::missing_hooks(&agent, &config, hook_script);
+            if hooks.is_empty() {
+                None
+            } else {
+                Some(NoticesMissingHookGroup { agent, hooks })
+            }
+        })
+        .collect()
+}
+
+/// Build the `Plugin / claude` notice based on the recorded plugin
+/// version and whether residual manual hook entries remain in
+/// `~/.claude/settings.json`. Priority order:
+///
+/// - No plugin install → `InstallRecommended` (the migration prompt
+///   handles legacy cleanup as part of the same step, so `has_residual`
+///   does not matter here).
+/// - Plugin installed + residual entries → `DuplicateHooks`. Takes
+///   precedence over `Stale` because hooks are firing twice right now
+///   and the cleanup is more urgent than a pending version bump.
+/// - Plugin installed, no residual, version mismatch → `Stale`.
+/// - Plugin installed, no residual, version match → no notice.
+fn compute_claude_plugin_notice(
+    installed_version: Option<&str>,
+    current_version: &str,
+    has_residual_hooks: bool,
+) -> Option<ClaudePluginNotice> {
+    match installed_version {
+        None => Some(ClaudePluginNotice::InstallRecommended),
+        Some(_) if has_residual_hooks => Some(ClaudePluginNotice::DuplicateHooks),
+        Some(v) if v == current_version => None,
+        Some(v) => Some(ClaudePluginNotice::Stale {
+            installed: v.to_string(),
+            current: current_version.to_string(),
+        }),
+    }
+}
+
+pub(crate) fn debug_forced_display() -> bool {
+    cfg!(feature = "debug")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -935,7 +1835,246 @@ mod tests {
 
     /// Reset filter click debounce so the next `handle_filter_click` is not ignored.
     fn reset_filter_debounce(state: &mut AppState) {
-        state.last_filter_click = std::time::Instant::now() - std::time::Duration::from_millis(200);
+        state.timers.last_filter_click =
+            std::time::Instant::now() - std::time::Duration::from_millis(200);
+    }
+
+    // ─── compute_missing_hook_groups: claude_plugin_present gating ───
+
+    /// Return a config loader that always reports an empty config — i.e.
+    /// every hook the adapter expects is reported as missing. This keeps
+    /// these tests focused on the agent filtering logic instead of on
+    /// the `missing_hooks` algorithm itself.
+    fn empty_config_loader() -> impl Fn(&str) -> serde_json::Value {
+        |_agent: &str| serde_json::Value::Null
+    }
+
+    #[test]
+    fn missing_hook_groups_includes_claude_when_plugin_not_installed() {
+        // Manual `~/.claude/settings.json` path — Claude must surface
+        // concrete missing-hook diagnostics so the user knows what to
+        // wire up. The Plugin section's InstallRecommended notice is a
+        // companion, not a substitute.
+        let groups = compute_missing_hook_groups(
+            /* claude_plugin_present */ false,
+            vec!["claude".to_string()],
+            "/fake/hook.sh",
+            empty_config_loader(),
+        );
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].agent, "claude");
+        assert!(
+            !groups[0].hooks.is_empty(),
+            "claude should report missing hooks against an empty config"
+        );
+    }
+
+    #[test]
+    fn missing_hook_groups_skips_claude_when_plugin_installed() {
+        // The plugin owns the hook wiring once installed, so Claude
+        // must NOT appear under Missing hooks (the Plugin section
+        // reports stale-version state separately).
+        let groups = compute_missing_hook_groups(
+            /* claude_plugin_present */ true,
+            vec!["claude".to_string()],
+            "/fake/hook.sh",
+            empty_config_loader(),
+        );
+        assert!(
+            groups.is_empty(),
+            "claude must be filtered out when the plugin is detected, got {:?}",
+            groups
+        );
+    }
+
+    #[test]
+    fn missing_hook_groups_keeps_codex_regardless_of_plugin() {
+        let agents = vec!["codex".to_string()];
+
+        let without = compute_missing_hook_groups(
+            false,
+            agents.clone(),
+            "/fake/hook.sh",
+            empty_config_loader(),
+        );
+        let with =
+            compute_missing_hook_groups(true, agents, "/fake/hook.sh", empty_config_loader());
+        assert_eq!(without, with);
+        assert_eq!(without.len(), 1);
+        assert_eq!(without[0].agent, "codex");
+    }
+
+    #[test]
+    fn missing_hook_groups_drops_only_claude_when_both_agents_present_and_plugin_installed() {
+        // Forced-debug rendering passes both agents; verify the filter
+        // hits Claude alone without affecting the Codex row.
+        let groups = compute_missing_hook_groups(
+            true,
+            vec!["claude".to_string(), "codex".to_string()],
+            "/fake/hook.sh",
+            empty_config_loader(),
+        );
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].agent, "codex");
+    }
+
+    // ─── compute_claude_plugin_notice ────────────────────────────────
+
+    #[test]
+    fn plugin_notice_install_recommended_when_version_missing() {
+        // No version recorded → the user has not run `/plugin install`
+        // yet, so the popup should encourage them to. Residual hooks do
+        // not change this — the migration prompt cleans them up too.
+        assert_eq!(
+            compute_claude_plugin_notice(None, "0.5.0", false),
+            Some(ClaudePluginNotice::InstallRecommended)
+        );
+        assert_eq!(
+            compute_claude_plugin_notice(None, "0.5.0", true),
+            Some(ClaudePluginNotice::InstallRecommended)
+        );
+    }
+
+    #[test]
+    fn plugin_notice_none_when_versions_match_and_no_residual() {
+        assert_eq!(
+            compute_claude_plugin_notice(Some("0.5.0"), "0.5.0", false),
+            None
+        );
+    }
+
+    #[test]
+    fn plugin_notice_stale_when_versions_differ_and_no_residual() {
+        assert_eq!(
+            compute_claude_plugin_notice(Some("0.4.3"), "0.5.0", false),
+            Some(ClaudePluginNotice::Stale {
+                installed: "0.4.3".into(),
+                current: "0.5.0".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn plugin_notice_duplicate_hooks_when_residual_overrides_stale() {
+        // Plugin is installed AND legacy entries are still in
+        // settings.json. Hooks fire twice. The DuplicateHooks notice
+        // takes precedence over Stale even when the version is also
+        // out of date — cleanup is the more urgent action.
+        assert_eq!(
+            compute_claude_plugin_notice(Some("0.4.3"), "0.5.0", true),
+            Some(ClaudePluginNotice::DuplicateHooks)
+        );
+        assert_eq!(
+            compute_claude_plugin_notice(Some("0.5.0"), "0.5.0", true),
+            Some(ClaudePluginNotice::DuplicateHooks)
+        );
+    }
+
+    // ─── copy feedback policy ────────────────────────────────────────
+
+    #[test]
+    fn record_notices_copy_result_success_sets_copied_feedback() {
+        let mut state = AppState::new(String::new());
+        assert!(state.record_notices_copy_result("claude", true));
+        let entry = state
+            .notices
+            .copied_at
+            .as_ref()
+            .expect("success path must set notices_copied_at");
+        assert_eq!(entry.0, "claude");
+    }
+
+    #[test]
+    fn record_notices_copy_result_failure_does_not_set_copied_feedback() {
+        let mut state = AppState::new(String::new());
+        // Pre-populate to assert the failure path does not overwrite it.
+        state.notices.copied_at = None;
+        assert!(!state.record_notices_copy_result("claude", false));
+        assert!(
+            state.notices.copied_at.is_none(),
+            "`[copied]` must not flash when every clipboard sink failed"
+        );
+    }
+
+    #[test]
+    fn record_notices_copy_result_failure_preserves_previous_feedback() {
+        let mut state = AppState::new(String::new());
+        let earlier = (
+            "codex".to_string(),
+            std::time::Instant::now() - std::time::Duration::from_millis(10),
+        );
+        state.notices.copied_at = Some(earlier.clone());
+        // A later copy that fails should not clobber an earlier success,
+        // but more importantly it must not fabricate a success for itself.
+        assert!(!state.record_notices_copy_result("claude", false));
+        let still = state
+            .notices
+            .copied_at
+            .as_ref()
+            .expect("prior success should survive a subsequent failure");
+        assert_eq!(still.0, earlier.0);
+    }
+
+    #[test]
+    fn copy_notices_prompt_short_circuits_for_unknown_agent() {
+        // `gemini` has no prompt definition, so the function must return
+        // early with `false` and leave `notices_copied_at` untouched —
+        // without touching the real clipboard or tmux at all.
+        let mut state = AppState::new(String::new());
+        state.notices.copied_at = None;
+        assert!(!state.copy_notices_prompt("gemini"));
+        assert!(state.notices.copied_at.is_none());
+        assert!(
+            state.pending_osc52_copy.is_none(),
+            "unknown agents must not queue an OSC 52 payload"
+        );
+    }
+
+    // ─── notices_copy_target_at hit detection ───────────────────────
+
+    fn copy_target_fixture() -> AppState {
+        let mut state = AppState::new(String::new());
+        state.notices.copy_targets = vec![
+            NoticesCopyTarget {
+                area: ratatui::layout::Rect::new(10, 5, 8, 1),
+                agent: "claude".into(),
+            },
+            NoticesCopyTarget {
+                area: ratatui::layout::Rect::new(10, 7, 8, 1),
+                agent: "codex".into(),
+            },
+        ];
+        state
+    }
+
+    #[test]
+    fn notices_copy_target_at_finds_claude_row() {
+        let state = copy_target_fixture();
+        assert_eq!(state.notices_copy_target_at(5, 10), Some("claude"));
+        assert_eq!(state.notices_copy_target_at(5, 17), Some("claude"));
+    }
+
+    #[test]
+    fn notices_copy_target_at_finds_codex_row() {
+        let state = copy_target_fixture();
+        assert_eq!(state.notices_copy_target_at(7, 12), Some("codex"));
+    }
+
+    #[test]
+    fn notices_copy_target_at_misses_outside_target_bounds() {
+        let state = copy_target_fixture();
+        // Same row but to the left of the slot
+        assert_eq!(state.notices_copy_target_at(5, 9), None);
+        // Same row but to the right of the slot
+        assert_eq!(state.notices_copy_target_at(5, 18), None);
+        // Gap row between the two targets
+        assert_eq!(state.notices_copy_target_at(6, 12), None);
+    }
+
+    #[test]
+    fn notices_copy_target_at_returns_none_when_no_targets_tracked() {
+        let state = AppState::new(String::new());
+        assert_eq!(state.notices_copy_target_at(5, 10), None);
     }
 
     fn test_pane(id: &str) -> PaneInfo {
@@ -956,6 +2095,9 @@ mod tests {
             pane_pid: None,
             worktree_name: String::new(),
             worktree_branch: String::new(),
+            session_id: None,
+            session_name: String::new(),
+            sidebar_spawned: false,
         }
     }
 
@@ -985,10 +2127,10 @@ mod tests {
         ];
         state.rebuild_row_targets();
 
-        assert_eq!(state.pane_row_targets.len(), 3);
-        assert_eq!(state.pane_row_targets[0].pane_id, "%1");
-        assert_eq!(state.pane_row_targets[1].pane_id, "%2");
-        assert_eq!(state.pane_row_targets[2].pane_id, "%3");
+        assert_eq!(state.layout.pane_row_targets.len(), 3);
+        assert_eq!(state.layout.pane_row_targets[0].pane_id, "%1");
+        assert_eq!(state.layout.pane_row_targets[1].pane_id, "%2");
+        assert_eq!(state.layout.pane_row_targets[2].pane_id, "%3");
     }
 
     #[test]
@@ -1010,12 +2152,12 @@ mod tests {
 
         // Start at first group
         assert_eq!(state.global.selected_pane_row, 0);
-        assert_eq!(state.pane_row_targets[0].pane_id, "%1");
+        assert_eq!(state.layout.pane_row_targets[0].pane_id, "%1");
 
         // Move to second group
         assert!(state.move_pane_selection(1));
         assert_eq!(state.global.selected_pane_row, 1);
-        assert_eq!(state.pane_row_targets[1].pane_id, "%5");
+        assert_eq!(state.layout.pane_row_targets[1].pane_id, "%5");
     }
 
     #[test]
@@ -1609,6 +2751,7 @@ mod tests {
                 name: "lib.rs".into(),
                 additions: 10,
                 deletions: 5,
+                path: String::new(),
             }],
             unstaged_files: vec![],
             untracked_files: vec!["new.rs".into()],
@@ -1657,7 +2800,7 @@ mod tests {
         state.global.selected_pane_row = 3;
 
         let pane = test_pane("%1");
-        let sessions = vec![SessionInfo {
+        let sessions = vec![crate::tmux::SessionInfo {
             session_name: "main".into(),
             windows: vec![crate::tmux::WindowInfo {
                 window_id: "@0".into(),
@@ -1671,9 +2814,8 @@ mod tests {
         state.apply_session_snapshot(true, sessions);
 
         assert!(state.sidebar_focused);
-        assert_eq!(state.sessions.len(), 1);
         assert_eq!(state.repo_groups.len(), 1);
-        assert_eq!(state.pane_row_targets.len(), 1);
+        assert_eq!(state.layout.pane_row_targets.len(), 1);
         assert_eq!(state.global.selected_pane_row, 0);
         // focused_pane_id is set by find_focused_pane() which queries tmux
         // directly, so we don't assert it here (tmux not available in tests).
@@ -1810,7 +2952,7 @@ mod tests {
     #[test]
     fn move_pane_selection_boundary_returns() {
         let mut state = AppState::new("%99".into());
-        state.pane_row_targets = vec![
+        state.layout.pane_row_targets = vec![
             RowTarget {
                 pane_id: "%1".into(),
             },
@@ -1863,7 +3005,7 @@ mod tests {
         state.global.selected_pane_row = 5;
         state.repo_groups = vec![];
         state.rebuild_row_targets();
-        assert!(state.pane_row_targets.is_empty());
+        assert!(state.layout.pane_row_targets.is_empty());
         // selected_pane_row stays as-is when targets empty (no clamp needed)
         assert_eq!(state.global.selected_pane_row, 5);
     }
@@ -1891,25 +3033,25 @@ mod tests {
         // All filter: all 3 panes
         state.global.status_filter = StatusFilter::All;
         state.rebuild_row_targets();
-        assert_eq!(state.pane_row_targets.len(), 3);
+        assert_eq!(state.layout.pane_row_targets.len(), 3);
 
         // Running filter: only 2 panes
         state.global.status_filter = StatusFilter::Running;
         state.rebuild_row_targets();
-        assert_eq!(state.pane_row_targets.len(), 2);
-        assert_eq!(state.pane_row_targets[0].pane_id, "%1");
-        assert_eq!(state.pane_row_targets[1].pane_id, "%3");
+        assert_eq!(state.layout.pane_row_targets.len(), 2);
+        assert_eq!(state.layout.pane_row_targets[0].pane_id, "%1");
+        assert_eq!(state.layout.pane_row_targets[1].pane_id, "%3");
 
         // Idle filter: only 1 pane
         state.global.status_filter = StatusFilter::Idle;
         state.rebuild_row_targets();
-        assert_eq!(state.pane_row_targets.len(), 1);
-        assert_eq!(state.pane_row_targets[0].pane_id, "%2");
+        assert_eq!(state.layout.pane_row_targets.len(), 1);
+        assert_eq!(state.layout.pane_row_targets[0].pane_id, "%2");
 
         // Error filter: no panes
         state.global.status_filter = StatusFilter::Error;
         state.rebuild_row_targets();
-        assert!(state.pane_row_targets.is_empty());
+        assert!(state.layout.pane_row_targets.is_empty());
     }
 
     #[test]
@@ -1941,7 +3083,7 @@ mod tests {
         state.global.status_filter = StatusFilter::Running;
         state.rebuild_row_targets();
         assert_eq!(state.global.selected_pane_row, 0);
-        assert_eq!(state.pane_row_targets[0].pane_id, "%1");
+        assert_eq!(state.layout.pane_row_targets[0].pane_id, "%1");
     }
 
     // ─── handle_mouse_click tests ────────────────────────────────────
@@ -1949,7 +3091,7 @@ mod tests {
     #[test]
     fn mouse_click_selects_agent_row() {
         let mut state = AppState::new("%99".into());
-        state.pane_row_targets = vec![
+        state.layout.pane_row_targets = vec![
             RowTarget {
                 pane_id: "%1".into(),
             },
@@ -1958,24 +3100,24 @@ mod tests {
             },
         ];
         // line_to_row: line 0 = group header (None), line 1 = agent 0, line 2 = agent 1
-        state.line_to_row = vec![None, Some(0), Some(1)];
+        state.layout.line_to_row = vec![None, Some(0), Some(1)];
         state.panes_scroll.offset = 0;
 
-        // row 0 = filter bar (skipped), row 1 = first agent list row
-        state.handle_mouse_click(2, 5); // row 2 → line_index = (2-1) = 1 → agent row 0
+        // row 0 = filter bar, row 1 = secondary header, row 2+ = agent list rows
+        state.handle_mouse_click(3, 5); // row 3 → line_index = (3-2) = 1 → agent row 0
         assert_eq!(state.global.selected_pane_row, 0);
 
-        state.handle_mouse_click(3, 5); // row 3 → line_index = (3-1) = 2 → agent row 1
+        state.handle_mouse_click(4, 5); // row 4 → line_index = (4-2) = 2 → agent row 1
         assert_eq!(state.global.selected_pane_row, 1);
     }
 
     #[test]
     fn mouse_click_on_filter_bar_changes_filter() {
         let mut state = AppState::new("%99".into());
-        state.pane_row_targets = vec![RowTarget {
+        state.layout.pane_row_targets = vec![RowTarget {
             pane_id: "%1".into(),
         }];
-        state.line_to_row = vec![None, Some(0)];
+        state.layout.line_to_row = vec![None, Some(0)];
         state.global.selected_pane_row = 0;
         state.global.status_filter = StatusFilter::All;
 
@@ -1994,9 +3136,33 @@ mod tests {
     }
 
     #[test]
+    fn mouse_click_on_secondary_header_toggles_repo_popup() {
+        let mut state = AppState::new("%99".into());
+        state.repo_groups = vec![
+            RepoGroup {
+                name: "alpha".into(),
+                has_focus: true,
+                panes: vec![(test_pane("%1"), PaneGitInfo::default())],
+            },
+            RepoGroup {
+                name: "beta".into(),
+                has_focus: false,
+                panes: vec![(test_pane("%2"), PaneGitInfo::default())],
+            },
+        ];
+        state.layout.repo_button_col = Some(20);
+
+        state.handle_mouse_click(1, 19);
+        assert!(!state.is_repo_popup_open());
+
+        state.handle_mouse_click(1, 20);
+        assert!(state.is_repo_popup_open());
+    }
+
+    #[test]
     fn mouse_click_with_scroll_offset() {
         let mut state = AppState::new("%99".into());
-        state.pane_row_targets = vec![
+        state.layout.pane_row_targets = vec![
             RowTarget {
                 pane_id: "%1".into(),
             },
@@ -2005,21 +3171,21 @@ mod tests {
             },
         ];
         // 5 lines total, scrolled down by 2
-        state.line_to_row = vec![None, Some(0), Some(0), None, Some(1)];
+        state.layout.line_to_row = vec![None, Some(0), Some(0), None, Some(1)];
         state.panes_scroll.offset = 2;
 
-        // row 3 → line_index = (3-1) + 2 = 4 → agent row 1
-        state.handle_mouse_click(3, 5);
+        // row 4 → line_index = (4-2) + 2 = 4 → agent row 1
+        state.handle_mouse_click(4, 5);
         assert_eq!(state.global.selected_pane_row, 1);
     }
 
     #[test]
     fn mouse_click_out_of_bounds() {
         let mut state = AppState::new("%99".into());
-        state.pane_row_targets = vec![RowTarget {
+        state.layout.pane_row_targets = vec![RowTarget {
             pane_id: "%1".into(),
         }];
-        state.line_to_row = vec![None, Some(0)];
+        state.layout.line_to_row = vec![None, Some(0)];
         state.global.selected_pane_row = 0;
 
         state.handle_mouse_click(50, 5); // way beyond line_to_row
@@ -2232,24 +3398,24 @@ mod tests {
         }];
         state.global.status_filter = StatusFilter::All;
         state.rebuild_row_targets();
-        assert_eq!(state.pane_row_targets.len(), 3);
+        assert_eq!(state.layout.pane_row_targets.len(), 3);
 
         // Click Running filter — row_targets should update immediately
         // Layout: " All  ●2  ◐0  ○1  ✕0" → Running at x=6
         reset_filter_debounce(&mut state);
         state.handle_filter_click(6);
         assert_eq!(state.global.status_filter, StatusFilter::Running);
-        assert_eq!(state.pane_row_targets.len(), 2);
-        assert_eq!(state.pane_row_targets[0].pane_id, "%1");
-        assert_eq!(state.pane_row_targets[1].pane_id, "%3");
+        assert_eq!(state.layout.pane_row_targets.len(), 2);
+        assert_eq!(state.layout.pane_row_targets[0].pane_id, "%1");
+        assert_eq!(state.layout.pane_row_targets[1].pane_id, "%3");
 
         // Click Idle filter — row_targets should update again
         // Layout: " All  ●2  ◐0  ○1  ✕0" → Idle at x=14
         reset_filter_debounce(&mut state);
         state.handle_filter_click(14);
         assert_eq!(state.global.status_filter, StatusFilter::Idle);
-        assert_eq!(state.pane_row_targets.len(), 1);
-        assert_eq!(state.pane_row_targets[0].pane_id, "%2");
+        assert_eq!(state.layout.pane_row_targets.len(), 1);
+        assert_eq!(state.layout.pane_row_targets[0].pane_id, "%2");
     }
 
     // ─── StatusFilter as_str / from_str tests ─────────────────────────
@@ -2265,24 +3431,24 @@ mod tests {
 
     #[test]
     fn status_filter_from_str_all_variants() {
-        assert_eq!(StatusFilter::from_str("all"), StatusFilter::All);
-        assert_eq!(StatusFilter::from_str("running"), StatusFilter::Running);
-        assert_eq!(StatusFilter::from_str("waiting"), StatusFilter::Waiting);
-        assert_eq!(StatusFilter::from_str("idle"), StatusFilter::Idle);
-        assert_eq!(StatusFilter::from_str("error"), StatusFilter::Error);
+        assert_eq!(StatusFilter::from_label("all"), StatusFilter::All);
+        assert_eq!(StatusFilter::from_label("running"), StatusFilter::Running);
+        assert_eq!(StatusFilter::from_label("waiting"), StatusFilter::Waiting);
+        assert_eq!(StatusFilter::from_label("idle"), StatusFilter::Idle);
+        assert_eq!(StatusFilter::from_label("error"), StatusFilter::Error);
     }
 
     #[test]
     fn status_filter_from_str_unknown_defaults_to_all() {
-        assert_eq!(StatusFilter::from_str(""), StatusFilter::All);
-        assert_eq!(StatusFilter::from_str("unknown"), StatusFilter::All);
-        assert_eq!(StatusFilter::from_str("Running"), StatusFilter::All); // case-sensitive
+        assert_eq!(StatusFilter::from_label(""), StatusFilter::All);
+        assert_eq!(StatusFilter::from_label("unknown"), StatusFilter::All);
+        assert_eq!(StatusFilter::from_label("Running"), StatusFilter::All); // case-sensitive
     }
 
     #[test]
     fn status_filter_roundtrip() {
         for filter in StatusFilter::VARIANTS {
-            assert_eq!(StatusFilter::from_str(filter.as_str()), filter);
+            assert_eq!(StatusFilter::from_label(filter.as_str()), filter);
         }
     }
 
@@ -2290,10 +3456,10 @@ mod tests {
 
     #[test]
     fn repo_filter_persistence_roundtrip() {
-        assert_eq!(RepoFilter::from_str("all"), RepoFilter::All);
-        assert_eq!(RepoFilter::from_str(""), RepoFilter::All);
+        assert_eq!(RepoFilter::from_label("all"), RepoFilter::All);
+        assert_eq!(RepoFilter::from_label(""), RepoFilter::All);
         assert_eq!(
-            RepoFilter::from_str("my-app"),
+            RepoFilter::from_label("my-app"),
             RepoFilter::Repo("my-app".into())
         );
         assert_eq!(RepoFilter::All.as_str(), "all");
@@ -2325,7 +3491,7 @@ mod tests {
         state.global.repo_filter = RepoFilter::All;
         state.rebuild_row_targets();
 
-        assert_eq!(state.pane_row_targets.len(), 2);
+        assert_eq!(state.layout.pane_row_targets.len(), 2);
     }
 
     #[test]
@@ -2346,8 +3512,8 @@ mod tests {
         state.global.repo_filter = RepoFilter::Repo("app".into());
         state.rebuild_row_targets();
 
-        assert_eq!(state.pane_row_targets.len(), 1);
-        assert_eq!(state.pane_row_targets[0].pane_id, "%2");
+        assert_eq!(state.layout.pane_row_targets.len(), 1);
+        assert_eq!(state.layout.pane_row_targets[0].pane_id, "%2");
     }
 
     #[test]
@@ -2375,8 +3541,8 @@ mod tests {
         state.rebuild_row_targets();
 
         // Only Running panes in "app" group
-        assert_eq!(state.pane_row_targets.len(), 1);
-        assert_eq!(state.pane_row_targets[0].pane_id, "%1");
+        assert_eq!(state.layout.pane_row_targets.len(), 1);
+        assert_eq!(state.layout.pane_row_targets[0].pane_id, "%1");
     }
 
     #[test]
@@ -2391,7 +3557,7 @@ mod tests {
         state.rebuild_row_targets();
 
         assert_eq!(state.global.repo_filter, RepoFilter::All);
-        assert_eq!(state.pane_row_targets.len(), 1);
+        assert_eq!(state.layout.pane_row_targets.len(), 1);
     }
 
     #[test]
@@ -2430,14 +3596,14 @@ mod tests {
 
         // Default: All → selected should be 0
         state.toggle_repo_popup();
-        assert!(state.repo_popup_open);
-        assert_eq!(state.repo_popup_selected, 0);
+        assert!(state.is_repo_popup_open());
+        assert_eq!(state.repo_popup_selected(), 0);
 
         // Close and set filter to "beta" → selected should be 2
         state.close_repo_popup();
         state.global.repo_filter = RepoFilter::Repo("beta".into());
         state.toggle_repo_popup();
-        assert_eq!(state.repo_popup_selected, 2); // ["All", "alpha", "beta"]
+        assert_eq!(state.repo_popup_selected(), 2); // ["All", "alpha", "beta"]
     }
 
     #[test]
@@ -2455,14 +3621,16 @@ mod tests {
                 panes: vec![(test_pane("%2"), PaneGitInfo::default())],
             },
         ];
-        state.repo_popup_open = true;
-        state.repo_popup_selected = 2; // "beta"
+        state.popup = PopupState::Repo {
+            selected: 2, // "beta"
+            area: None,
+        };
         state.confirm_repo_popup();
 
         assert_eq!(state.global.repo_filter, RepoFilter::Repo("beta".into()));
-        assert!(!state.repo_popup_open);
-        assert_eq!(state.pane_row_targets.len(), 1);
-        assert_eq!(state.pane_row_targets[0].pane_id, "%2");
+        assert!(!state.is_repo_popup_open());
+        assert_eq!(state.layout.pane_row_targets.len(), 1);
+        assert_eq!(state.layout.pane_row_targets[0].pane_id, "%2");
     }
 
     #[test]
@@ -2474,8 +3642,10 @@ mod tests {
             panes: vec![(test_pane("%1"), PaneGitInfo::default())],
         }];
         state.global.repo_filter = RepoFilter::Repo("app".into());
-        state.repo_popup_open = true;
-        state.repo_popup_selected = 0; // "All"
+        state.popup = PopupState::Repo {
+            selected: 0, // "All"
+            area: None,
+        };
         state.confirm_repo_popup();
 
         assert_eq!(state.global.repo_filter, RepoFilter::All);

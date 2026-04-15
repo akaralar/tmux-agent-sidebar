@@ -11,6 +11,7 @@
 - **Task & subagent tracking** — Displays task progress (e.g. `3/7`) and spawned subagents as a parent-child tree
 - **Git integration** — Shows branch name, ahead/behind counts, PR number (`gh`), and per-file diff stats
 - **Worktree-aware grouping** — Groups agents by the same repo, including worktrees, so related panes stay together
+- **Spawn & remove worktrees from the sidebar** — Press `n` (or click `+` next to a repo header) to create a new `git worktree`, open a tmux window in it, and launch an agent in one step. Remove it later with `x`, or click the red `×` next to the branch on any spawn-created row
 - **Pane metadata** — Shows listening localhost ports and execution command info for each pane
 
 ## Agent Pane
@@ -27,7 +28,7 @@
         </li>
         <li><b>Agent color</b>
           <ul>
-            <li>Claude (terracotta), Codex (purple)</li>
+            <li>Claude (terracotta), Codex (purple), <code>/rename</code></li>
           </ul>
         </li>
         <li><b>Permission badge</b>
@@ -56,7 +57,7 @@
         <li><b>Listening ports</b>
           <ul><li>localhost ports the pane's process is listening on</li></ul>
         </li>
-        <li><b>Response arrow (▶)</b>
+        <li><b>Response arrow (▷)</b>
           <ul><li>preview of the latest agent response</li></ul>
         </li>
         <li><b>Prompt text</b>
@@ -73,28 +74,28 @@
 ## Requirements
 
 - tmux 3.0+
-- [TPM](https://github.com/tmux-plugins/tpm) (recommended, for plugin installation)
-- [Rust](https://rustup.rs/) (only if building from source)
+- [TPM](https://github.com/tmux-plugins/tpm) (for plugin installation)
 - [GitHub CLI](https://cli.github.com/) (optional, for displaying PR numbers in the Git tab)
+- [Rust](https://rustup.rs/) (only if building from source)
 
 ## Setting Up
 
 ### 1. Installation
 
-#### Installation with TPM
+**Option A: Installation with TPM (recommended).**
 
 Add the plugin to your `tmux.conf`:
 
 ```tmux
 set -g @plugin 'hiroppy/tmux-agent-sidebar'
-run '~/.tmux/plugins/tpm/tpm'
 ```
 
-Press `prefix + I` to install. On the first run, an install wizard prompts you to download a pre-built binary or build from source.
+Reload tmux.conf (`tmux source ~/.tmux.conf`), then press `prefix + I` to install. On the first run, an install wizard prompts you to download a pre-built binary or build from source.
 
 To update later, press `prefix + U` in TPM's plugin list and select `tmux-agent-sidebar`. The install wizard runs again if the bundled binary has changed.
 
-#### Manual
+<details>
+<summary>Option B: Manual</summary>
 
 1. Clone the repository:
 
@@ -110,27 +111,16 @@ run-shell ~/.tmux/plugins/tmux-agent-sidebar/tmux-agent-sidebar.tmux
 
 3. Install the binary using one of the following methods:
 
-   <details>
-   <summary>Download pre-built binary</summary>
+```sh
+# macOS (Apple Silicon)
+curl -fSL https://github.com/hiroppy/tmux-agent-sidebar/releases/latest/download/tmux-agent-sidebar-darwin-aarch64 \
+  -o ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
+chmod +x ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
+cd ~/.tmux/plugins/tmux-agent-sidebar
+cargo build --release
+```
 
-   ```sh
-   # macOS (Apple Silicon)
-   curl -fSL https://github.com/hiroppy/tmux-agent-sidebar/releases/latest/download/tmux-agent-sidebar-darwin-aarch64 \
-     -o ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
-   chmod +x ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar
-   ```
-
-   </details>
-
-   <details>
-   <summary>Build from source (requires Rust)</summary>
-
-   ```sh
-   cd ~/.tmux/plugins/tmux-agent-sidebar
-   cargo build --release
-   ```
-
-   </details>
+</details>
 
 ### 2. Reload tmux config
 
@@ -142,264 +132,34 @@ The sidebar receives status updates through agent hooks. Add the following hook 
 
 #### 3.1 Claude Code
 
-Create `~/.claude/settings.json` first.
+The repository ships as a Claude Code plugin, so the hooks register themselves.
 
-**Option A — Let an LLM wire it up (recommended).** Paste the following prompt into a Claude Code session:
+Inside Claude Code, register the marketplace and install the plugin:
+
+```sh
+/plugin marketplace add ~/.tmux/plugins/tmux-agent-sidebar
+/plugin install tmux-agent-sidebar@hiroppy
+```
+
+Either form wires up the Claude Code hooks. Run `/reload-plugins` (or restart Claude Code) to activate them.
+
+<details>
+<summary>
+If your environment can' use plugin, you will be able to register hooks to your settings.json using below prompt.
+</summary>
 
 ```
 Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar setup claude (fall back to ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar if that path is missing). Add these hooks to ~/.claude/settings.json. If hooks already exist, merge them without making destructive changes.
-```
-
-<details>
-<summary>Option B — Manual: copy-paste this JSON into <code>~/.claude/settings.json</code></summary>
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude session-start"
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude session-end"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude user-prompt-submit"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude stop"
-          }
-        ]
-      }
-    ],
-    "StopFailure": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude stop-failure"
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude notification"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude activity-log"
-          }
-        ]
-      }
-    ],
-    "PermissionDenied": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude permission-denied"
-          }
-        ]
-      }
-    ],
-    "CwdChanged": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude cwd-changed"
-          }
-        ]
-      }
-    ],
-    "SubagentStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude subagent-start"
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude subagent-stop"
-          }
-        ]
-      }
-    ],
-    "TaskCreated": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude task-created"
-          }
-        ]
-      }
-    ],
-    "TaskCompleted": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude task-completed"
-          }
-        ]
-      }
-    ],
-    "TeammateIdle": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude teammate-idle"
-          }
-        ]
-      }
-    ],
-    "WorktreeCreate": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude worktree-create"
-          }
-        ]
-      }
-    ],
-    "WorktreeRemove": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh claude worktree-remove"
-          }
-        ]
-      }
-    ]
-  }
-}
 ```
 
 </details>
 
 #### 3.2 Codex
 
-Create `~/.codex/hooks.json` first.
-
-**Option A — Let an LLM wire it up (recommended).** Paste the following prompt into a Codex session:
-
-```
-Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar setup codex (fall back to ~/.tmux/plugins/tmux-agent-sidebar/bin/tmux-agent-sidebar if that path is missing). Add these hooks to ~/.codex/hooks.json. If hooks already exist, merge them without making destructive changes.
-```
-
-<details>
-<summary>Option B — Manual: copy-paste this JSON into <code>~/.codex/hooks.json</code></summary>
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh codex session-start"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh codex user-prompt-submit"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh codex stop"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.tmux/plugins/tmux-agent-sidebar/hook.sh codex activity-log"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-</details>
+1. Open a Codex pane in tmux and focus it.
+2. Press `prefix + e` to toggle the sidebar. A yellow `ⓘ` badge appears in the top row of the sidebar when required hooks are missing.
+3. Click `ⓘ`, then click `[copy]` next to `codex` in the Notices popup.
+4. Switch back to the Codex pane and paste. Codex will run `tmux-agent-sidebar setup codex` and merge the hooks into `~/.codex/hooks.json`.
 
 ## Keybindings
 
@@ -412,11 +172,39 @@ Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar setup c
 | `h` / `Left` | Previous status filter when the filter bar is focused |
 | `l` / `Right` | Next status filter when the filter bar is focused |
 | `r` | Open repo filter popup (filter bar only) |
+| `n` | Spawn a new worktree + agent for the selected row's repo |
+| `x` | Remove the selected spawn-created pane (opens the close modal) |
 | `Enter` | Jump to the selected agent's pane / confirm the repo popup |
 | `Tab` | Cycle status filter (All → Running → Waiting → Idle → Error) |
 | `Shift+Tab` | Switch bottom panel tab (Activity / Git) |
 | `Esc` | Return focus to the agents panel / close the repo popup |
+| Mouse click `+` | Open the spawn modal for that repo (right edge of each repo header) |
+| Mouse click `×` | Open the close-pane modal for that spawn-created worktree (red `×` next to the branch) |
 | Mouse click | Jump to an agent's pane / filter by status / open the repo popup |
+
+### Spawn worktree modal
+
+Opened with `n` or by clicking the `+` button next to a repo header.
+
+| Key | Action |
+|---|---|
+| Text keys | Type the name (used as the branch slug and tmux window name, e.g. `add login form` → `agent/add-login-form`) |
+| `↑` / `↓` / `Tab` / `Shift+Tab` | Move focus between `NAME` / `AGENT` / `MODE` fields |
+| `←` / `→` | Cycle the value when the agent or mode field has focus |
+| `Enter` | Create the worktree + window and launch the agent |
+| `Esc` / click outside | Cancel |
+
+### Close pane modal
+
+Opened with `x` on a spawn-created pane.
+
+| Key | Action |
+|---|---|
+| `y` / `Enter` | Close the tmux window, remove the git worktree (`--force`), **and** delete the branch the spawn created (`git branch -D`) |
+| `c` | Close the tmux window only, keep the worktree and branch on disk |
+| `n` / `Esc` | Cancel |
+
+Branches are force-deleted because the sidebar auto-generates them under the `agent/` prefix for short-lived explorations; squash/rebase-merged work would otherwise be refused by the non-forced `git branch -d` check. Recover via `git reflog` if needed.
 
 
 ## Feature Support by Agent
@@ -425,7 +213,7 @@ Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar setup c
 |---|---|---|---|
 | Status tracking (running / idle / error) | :white_check_mark: | :white_check_mark: | Driven by `SessionStart` / `UserPromptSubmit` / `Stop` |
 | Prompt text display | :white_check_mark: | :white_check_mark: | Saved from `UserPromptSubmit` |
-| Response text display (`▶ ...`) | :white_check_mark: | :white_check_mark: | Populated from `Stop` payload |
+| Response text display (`▷ ...`) | :white_check_mark: | :white_check_mark: | Populated from `Stop` payload |
 | Waiting status + wait reason | :white_check_mark: | :x: | Populated from `Notification`, `PermissionDenied`, and `TeammateIdle` (all Claude-only) |
 | API failure reason display | :white_check_mark: | :x: | `StopFailure` is wired only for Claude |
 | Permission badge | :white_check_mark: (`plan` / `edit` / `auto` / `!`) | :white_check_mark: (`auto` / `!` only) | Codex badges are inferred from process arguments |
@@ -455,12 +243,16 @@ set -g @sidebar_bottom_height 20         # bottom panel height in lines (default
 set -g @sidebar_auto_create off          # disable auto-create on new windows (default: on)
 set -g @sidebar_mascot on                # show cat mascot animation in bottom panel (default: off)
 
+# Spawn worktree modal defaults (optional)
+set -g @agent-sidebar-default-agent codex  # agent launched by `n` (default: claude)
+set -g @agent-sidebar-branch-prefix wip/   # branch prefix for new worktrees (default: agent/)
+
 # Colors (256-color palette numbers) — all defaults live in src/ui/colors.rs
 set -g @sidebar_color_all 111            # selected "all" filter icon (default: 111 sky blue)
 set -g @sidebar_color_running 114        # selected running filter icon and running pane status (default: 114 green)
 set -g @sidebar_color_waiting 221        # selected waiting filter icon, waiting pane status, version banner (default: 221 yellow)
 set -g @sidebar_color_idle 110           # selected idle filter icon and idle pane status (default: 110 soft blue)
-set -g @sidebar_color_error 203          # selected error filter icon and error pane status (default: 203 red)
+set -g @sidebar_color_error 167          # selected error filter icon and error pane status (default: 167 soft red)
 set -g @sidebar_color_filter_inactive 245 # unselected status filter icons and zero counts (default: 245 mid gray)
 set -g @sidebar_color_border 240         # unfocused panel borders and tab separators (default: 240 dark gray)
 set -g @sidebar_color_accent 153         # active pane marker, focused repo header, focused bottom panel border, repo popup border (default: 153 pale sky blue)
@@ -472,7 +264,7 @@ set -g @sidebar_color_text_muted 252     # secondary text (tree branches, empty-
 set -g @sidebar_color_text_inactive 244  # body text of unfocused pane rows (prompt/response, idle hint) (default: 244 mid gray)
 set -g @sidebar_color_port 246           # port numbers (default: 246 light gray)
 set -g @sidebar_color_wait_reason 221    # wait reason text (default: 221 yellow)
-set -g @sidebar_color_selection 237      # selected row background (default: 237 dark gray)
+set -g @sidebar_color_selection 239      # selected row background (default: 239 slightly lighter dark gray)
 set -g @sidebar_color_branch 109         # git branch name (default: 109 teal)
 set -g @sidebar_color_task_progress 223   # task progress summary (default: 223 pale yellow)
 set -g @sidebar_color_subagent 73         # subagent tree (default: 73 green)
@@ -483,7 +275,7 @@ set -g @sidebar_color_file_change 221     # file change stats (default: 221 yell
 set -g @sidebar_color_pr_link 117         # PR link / number (default: 117 blue)
 set -g @sidebar_color_section_title 109   # section titles (default: 109 teal)
 set -g @sidebar_color_activity_timestamp 109 # activity timestamps (default: 109 teal)
-set -g @sidebar_color_response_arrow 74   # response arrow (default: 74 cyan)
+set -g @sidebar_color_response_arrow 81   # response arrow (default: 81 bright cyan)
 
 # Icons (Unicode glyphs; defaults keep the current look)
 set -g @sidebar_icon_all ≡               # status filter bar "all" icon
@@ -515,5 +307,43 @@ This is useful for integrating agent status into your tmux status bar, custom sc
 ## Uninstalling
 
 1. Remove the `set -g @plugin` (or `run-shell`) line from your `tmux.conf`
-2. Remove hook entries from your Claude Code / Codex settings
+2. Remove hook entries or plugins from your Claude Code / Codex settings
 3. Remove the plugin directory: `rm -rf ~/.tmux/plugins/tmux-agent-sidebar`
+
+## Development
+
+Symlink the plugin directory to your working copy so that builds are picked up without copying artifacts. If TPM already cloned the plugin, remove it first:
+
+```sh
+rm -rf ~/.tmux/plugins/tmux-agent-sidebar
+ln -s <path-to-this-repo> ~/.tmux/plugins/tmux-agent-sidebar
+```
+
+Then build — the binary that your local tmux sidebar loads is replaced in place. Toggle the sidebar off → on to pick up the new build.
+
+```sh
+cargo build --release
+# or, enable the `debug` feature to force-display notices (version, missing hooks, claude plugin)
+cargo build --release --features debug
+```
+
+### Claude Code plugin
+
+This repository is itself a Claude Code marketplace (see `.claude-plugin/marketplace.json`). Because `~/.tmux/plugins/tmux-agent-sidebar` is symlinked to the repo, the same install flow from [3.1 Claude Code](#31-claude-code) already points Claude Code at your working copy:
+
+```
+/plugin marketplace add ~/.tmux/plugins/tmux-agent-sidebar
+/plugin install tmux-agent-sidebar@hiroppy
+```
+
+After editing plugin files, pick up changes without reinstalling:
+
+- **`hooks/hooks.json`, `.claude-plugin/plugin.json`, `hook.sh`** — run `/reload-plugins` in Claude Code (or restart it).
+- **Rust sources** — `cargo build --release`, then toggle the sidebar off → on.
+
+To iterate from a git worktree, register the worktree path as its own marketplace:
+
+```
+/plugin marketplace add <worktree-path>
+/plugin install tmux-agent-sidebar@hiroppy
+```

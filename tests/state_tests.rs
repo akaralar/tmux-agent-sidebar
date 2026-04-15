@@ -5,16 +5,17 @@ use test_helpers::*;
 use tmux_agent_sidebar::activity::ActivityEntry;
 use tmux_agent_sidebar::group::{PaneGitInfo, RepoGroup};
 use tmux_agent_sidebar::state::{
-    AppState, BottomTab, Focus, GlobalState, RepoFilter, RowTarget, StatusFilter,
+    AppState, BottomTab, Focus, GlobalState, PopupState, RepoFilter, RowTarget, StatusFilter,
 };
 use tmux_agent_sidebar::tmux::{AgentType, PaneInfo, PaneStatus, SessionInfo, WindowInfo};
+use tmux_agent_sidebar::worktree;
 
 // ─── State Transition Tests ────────────────────────────────────────
 
 #[test]
 fn test_move_pane_selection_bounds() {
     let mut state = make_state(vec![]);
-    state.pane_row_targets = vec![
+    state.layout.pane_row_targets = vec![
         RowTarget {
             pane_id: "%1".into(),
         },
@@ -89,10 +90,10 @@ fn test_line_to_row_single_agent() {
     state.rebuild_row_targets();
     let _ = render_to_styled_string(&mut state, 28, 10);
     // repo header, agent status, idle hint
-    assert_eq!(state.line_to_row.len(), 3);
-    assert_eq!(state.line_to_row[0], None); // repo header
-    assert_eq!(state.line_to_row[1], Some(0)); // agent status
-    assert_eq!(state.line_to_row[2], Some(0)); // idle hint
+    assert_eq!(state.layout.line_to_row.len(), 3);
+    assert_eq!(state.layout.line_to_row[0], None); // repo header
+    assert_eq!(state.layout.line_to_row[1], Some(0)); // agent status
+    assert_eq!(state.layout.line_to_row[2], Some(0)); // idle hint
 }
 
 #[test]
@@ -114,6 +115,9 @@ fn test_line_to_row_two_agents() {
         pane_pid: None,
         worktree_name: String::new(),
         worktree_branch: String::new(),
+        session_id: None,
+        session_name: String::new(),
+        sidebar_spawned: false,
     };
     let pane2 = PaneInfo {
         pane_id: "%2".into(),
@@ -132,6 +136,9 @@ fn test_line_to_row_two_agents() {
         pane_pid: None,
         worktree_name: String::new(),
         worktree_branch: String::new(),
+        session_id: None,
+        session_name: String::new(),
+        sidebar_spawned: false,
     };
 
     let mut state = make_state(vec![SessionInfo {
@@ -148,11 +155,11 @@ fn test_line_to_row_two_agents() {
     state.rebuild_row_targets();
     let _ = render_to_styled_string(&mut state, 28, 10);
     // repo header, agent1, agent2 status+hint
-    assert_eq!(state.line_to_row.len(), 4);
-    assert_eq!(state.line_to_row[0], None); // repo header
-    assert_eq!(state.line_to_row[1], Some(0)); // agent 1
-    assert_eq!(state.line_to_row[2], Some(1)); // agent 2 status line
-    assert_eq!(state.line_to_row[3], Some(1)); // agent 2 idle hint
+    assert_eq!(state.layout.line_to_row.len(), 4);
+    assert_eq!(state.layout.line_to_row[0], None); // repo header
+    assert_eq!(state.layout.line_to_row[1], Some(0)); // agent 1
+    assert_eq!(state.layout.line_to_row[2], Some(1)); // agent 2 status line
+    assert_eq!(state.layout.line_to_row[3], Some(1)); // agent 2 idle hint
 }
 
 #[test]
@@ -174,10 +181,10 @@ fn test_line_to_row_with_prompt() {
     state.rebuild_row_targets();
     let _ = render_to_styled_string(&mut state, 28, 10);
     // repo header, agent status, prompt
-    assert_eq!(state.line_to_row.len(), 3);
-    assert_eq!(state.line_to_row[0], None); // repo header
-    assert_eq!(state.line_to_row[1], Some(0)); // agent status line
-    assert_eq!(state.line_to_row[2], Some(0)); // prompt line
+    assert_eq!(state.layout.line_to_row.len(), 3);
+    assert_eq!(state.layout.line_to_row[0], None); // repo header
+    assert_eq!(state.layout.line_to_row[1], Some(0)); // agent status line
+    assert_eq!(state.layout.line_to_row[2], Some(0)); // prompt line
 }
 
 #[test]
@@ -200,15 +207,15 @@ fn test_line_to_row_with_version_banner() {
     });
     state.rebuild_row_targets();
     let _ = render_to_string(&mut state, 28, 10);
-    // version banner only appears in the secondary header, not in the scrollable list
-    assert_eq!(state.line_to_row.len(), 3);
-    assert_eq!(state.line_to_row[0], None); // repo header
-    assert_eq!(state.line_to_row[1], Some(0)); // agent status line
-    assert_eq!(state.line_to_row[2], Some(0)); // idle hint
+    // version banner should still stay out of the scrollable list
+    assert_eq!(state.layout.line_to_row.len(), 3);
+    assert_eq!(state.layout.line_to_row[0], None); // repo header
+    assert_eq!(state.layout.line_to_row[1], Some(0)); // agent status line
+    assert_eq!(state.layout.line_to_row[2], Some(0)); // idle hint
 }
 
 #[test]
-fn test_secondary_header_click_ignored_when_version_banner_is_visible() {
+fn test_secondary_header_click_on_i_opens_notices_popup_even_without_missing_hooks() {
     let pane = make_pane(AgentType::Claude, PaneStatus::Idle);
     let mut state = make_state(vec![SessionInfo {
         session_name: "main".into(),
@@ -221,16 +228,21 @@ fn test_secondary_header_click_ignored_when_version_banner_is_visible() {
         }],
     }]);
     state.repo_groups = vec![make_repo_group("project", vec![pane])];
+    // make_state() seeds a missing hook group for general-purpose
+    // tests; clear it here so the test actually exercises the
+    // version-notice-only path described in the test name.
+    state.notices.missing_hook_groups.clear();
     state.version_notice = Some(tmux_agent_sidebar::version::UpdateNotice {
         local_version: "0.2.6".into(),
         latest_version: "0.2.7".into(),
     });
     state.rebuild_row_targets();
+    let _ = render_to_string(&mut state, 28, 10);
 
-    state.handle_mouse_click(1, 100);
+    state.handle_mouse_click(1, 0);
     assert!(
-        !state.repo_popup_open,
-        "repo popup should stay closed while the version banner replaces the secondary header"
+        state.is_notices_popup_open(),
+        "i should stay clickable even when there are no missing hooks"
     );
 }
 
@@ -254,7 +266,7 @@ fn test_rebuild_row_targets_clamps_selection() {
 
     // Trigger rebuild
     state.rebuild_row_targets();
-    assert_eq!(state.pane_row_targets.len(), 2);
+    assert_eq!(state.layout.pane_row_targets.len(), 2);
 
     // Now shrink to 1 agent
     state.repo_groups[0].panes.pop();
@@ -291,6 +303,7 @@ fn test_scroll_git_bounds() {
         name: "file.rs".into(),
         additions: 0,
         deletions: 0,
+        path: String::new(),
     }];
     state.git_scroll.total_lines = 8;
     state.git_scroll.visible_height = 3;
@@ -324,6 +337,7 @@ fn test_apply_git_data() {
             name: "src/lib.rs".into(),
             additions: 10,
             deletions: 5,
+            path: String::new(),
         }],
         unstaged_files: vec![],
         untracked_files: vec![],
@@ -353,12 +367,12 @@ fn test_state_new_defaults() {
     let state = AppState::new("%99".into());
     assert_eq!(state.now, 0);
     assert_eq!(state.tmux_pane, "%99");
-    assert!(state.sessions.is_empty());
+    assert!(state.repo_groups.is_empty());
     assert!(!state.sidebar_focused);
     assert_eq!(state.focus, Focus::Panes);
     assert_eq!(state.spinner_frame, 0);
     assert_eq!(state.global.selected_pane_row, 0);
-    assert!(state.pane_row_targets.is_empty());
+    assert!(state.layout.pane_row_targets.is_empty());
     assert!(state.activity_entries.is_empty());
     assert_eq!(state.activity_scroll.offset, 0);
     assert_eq!(state.activity_max_entries, 50);
@@ -376,7 +390,7 @@ fn test_state_new_defaults() {
 #[test]
 fn test_move_pane_selection_return_value() {
     let mut state = make_state(vec![]);
-    state.pane_row_targets = vec![
+    state.layout.pane_row_targets = vec![
         RowTarget {
             pane_id: "%1".into(),
         },
@@ -418,6 +432,7 @@ fn test_scroll_bottom_dispatches_to_git() {
         name: "file.rs".into(),
         additions: 0,
         deletions: 0,
+        path: String::new(),
     }];
     state.git_scroll.total_lines = 10;
     state.git_scroll.visible_height = 3;
@@ -505,19 +520,19 @@ fn test_filter_change_rebuilds_row_targets() {
     // All filter shows both
     state.global.status_filter = StatusFilter::All;
     state.rebuild_row_targets();
-    assert_eq!(state.pane_row_targets.len(), 2);
+    assert_eq!(state.layout.pane_row_targets.len(), 2);
 
     // Simulates sync_global_state setting filter to Running
     state.global.status_filter = StatusFilter::Running;
     state.rebuild_row_targets();
-    assert_eq!(state.pane_row_targets.len(), 1);
-    assert_eq!(state.pane_row_targets[0].pane_id, "%1");
+    assert_eq!(state.layout.pane_row_targets.len(), 1);
+    assert_eq!(state.layout.pane_row_targets[0].pane_id, "%1");
 
     // Simulates sync_global_state setting filter to Idle
     state.global.status_filter = StatusFilter::Idle;
     state.rebuild_row_targets();
-    assert_eq!(state.pane_row_targets.len(), 1);
-    assert_eq!(state.pane_row_targets[0].pane_id, "%2");
+    assert_eq!(state.layout.pane_row_targets.len(), 1);
+    assert_eq!(state.layout.pane_row_targets[0].pane_id, "%2");
 }
 
 #[test]
@@ -837,4 +852,249 @@ fn window_activation_syncs_all_fields() {
     assert_eq!(g.status_filter, StatusFilter::Idle);
     assert_eq!(g.selected_pane_row, 4);
     assert_eq!(g.repo_filter, RepoFilter::Repo("my-app".into()));
+}
+
+// ─── Spawn / Remove Popup State ───────────────────────────────────
+
+fn spawn_state_with_repo() -> AppState {
+    let mut state = make_state(vec![]);
+    state.open_spawn_input_for_repo("myproj".into(), "/home/u/myproj".into(), None);
+    state
+}
+
+#[test]
+fn open_spawn_input_initialises_fields_to_defaults() {
+    let state = spawn_state_with_repo();
+    match &state.popup {
+        PopupState::SpawnInput {
+            input,
+            target_repo,
+            target_repo_root,
+            agent_idx,
+            mode_idx,
+            field,
+            ..
+        } => {
+            assert_eq!(input, "");
+            assert_eq!(target_repo, "myproj");
+            assert_eq!(target_repo_root, "/home/u/myproj");
+            assert_eq!(*agent_idx, 0);
+            assert_eq!(*mode_idx, 0);
+            assert_eq!(*field, tmux_agent_sidebar::state::SpawnField::Task);
+        }
+        _ => panic!("expected SpawnInput popup"),
+    }
+}
+
+#[test]
+fn spawn_input_push_char_only_types_into_input_field() {
+    let mut state = spawn_state_with_repo();
+    state.spawn_input_push_char('h');
+    state.spawn_input_push_char('i');
+    // Move to agent field — pushing chars there must be a no-op.
+    state.spawn_input_next_field();
+    state.spawn_input_push_char('x');
+    // Back to mode field — still a no-op.
+    state.spawn_input_next_field();
+    state.spawn_input_push_char('y');
+    match &state.popup {
+        PopupState::SpawnInput { input, .. } => assert_eq!(input, "hi"),
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn spawn_input_pop_char_removes_trailing_char_only_on_input_field() {
+    let mut state = spawn_state_with_repo();
+    for c in "abc".chars() {
+        state.spawn_input_push_char(c);
+    }
+    state.spawn_input_pop_char();
+    match &state.popup {
+        PopupState::SpawnInput { input, .. } => assert_eq!(input, "ab"),
+        _ => panic!(),
+    }
+
+    // On a non-input field, pop is a no-op.
+    state.spawn_input_next_field();
+    state.spawn_input_pop_char();
+    match &state.popup {
+        PopupState::SpawnInput { input, .. } => assert_eq!(input, "ab"),
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn spawn_input_field_wraps_forward_and_backward() {
+    let mut state = spawn_state_with_repo();
+    state.spawn_input_next_field();
+    state.spawn_input_next_field();
+    state.spawn_input_next_field(); // wraps back to Task
+    match &state.popup {
+        PopupState::SpawnInput { field, .. } => {
+            assert_eq!(*field, tmux_agent_sidebar::state::SpawnField::Task)
+        }
+        _ => panic!(),
+    }
+    state.spawn_input_prev_field(); // should land on Mode
+    match &state.popup {
+        PopupState::SpawnInput { field, .. } => {
+            assert_eq!(*field, tmux_agent_sidebar::state::SpawnField::Mode)
+        }
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn spawn_input_cycle_changes_agent_and_resets_mode() {
+    let mut state = spawn_state_with_repo();
+    state.spawn_input_next_field(); // field = 1 (agent)
+    // Cycle agent forward — expect agent_idx to advance.
+    state.spawn_input_cycle(1);
+    match &state.popup {
+        PopupState::SpawnInput {
+            agent_idx,
+            mode_idx,
+            ..
+        } => {
+            assert_eq!(*agent_idx, 1, "agent should advance");
+            assert_eq!(*mode_idx, 0, "mode should reset when agent changes");
+        }
+        _ => panic!(),
+    }
+    // Cycle back — wraps to 0.
+    state.spawn_input_cycle(-1);
+    match &state.popup {
+        PopupState::SpawnInput { agent_idx, .. } => assert_eq!(*agent_idx, 0),
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn spawn_input_cycle_on_mode_field_increments_mode_only() {
+    let mut state = spawn_state_with_repo();
+    state.spawn_input_next_field(); // agent
+    state.spawn_input_next_field(); // mode
+    state.spawn_input_cycle(1);
+    match &state.popup {
+        PopupState::SpawnInput {
+            agent_idx,
+            mode_idx,
+            ..
+        } => {
+            assert_eq!(*agent_idx, 0);
+            assert_eq!(*mode_idx, 1);
+        }
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn spawn_input_cycle_on_input_field_is_noop() {
+    let mut state = spawn_state_with_repo();
+    // field 0 (input) — cycle should not touch agent/mode.
+    state.spawn_input_cycle(1);
+    state.spawn_input_cycle(-1);
+    match &state.popup {
+        PopupState::SpawnInput {
+            agent_idx,
+            mode_idx,
+            ..
+        } => {
+            assert_eq!(*agent_idx, 0);
+            assert_eq!(*mode_idx, 0);
+        }
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn close_spawn_input_resets_popup() {
+    let mut state = spawn_state_with_repo();
+    state.close_spawn_input();
+    assert!(matches!(state.popup, PopupState::None));
+    assert!(!state.is_spawn_input_open());
+}
+
+#[test]
+fn set_flash_and_take_flash_returns_then_clears_after_deadline() {
+    let mut state = make_state(vec![]);
+    state.set_flash("hello");
+    assert_eq!(state.take_flash().as_deref(), Some("hello"));
+    // Flash is still valid because expiry is 4s in the future.
+    assert_eq!(state.take_flash().as_deref(), Some("hello"));
+    // Expire manually and verify take_flash clears it.
+    if let Some((_, exp)) = state.flash.as_mut() {
+        *exp = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    }
+    assert_eq!(state.take_flash(), None);
+    assert!(state.flash.is_none());
+}
+
+#[test]
+fn agent_cycle_keeps_mode_in_bounds_for_codex() {
+    // Codex has only 3 modes; cycling to codex with a high mode_idx
+    // should be safe because agent switch resets mode_idx to 0.
+    let mut state = spawn_state_with_repo();
+    state.spawn_input_next_field(); // mode moved away from 0? no, field=1 (agent)
+    // First cycle past the claude mode list (5 entries) to exercise
+    // wrapping, then jump to codex.
+    state.spawn_input_next_field(); // field = 2 (mode)
+    for _ in 0..worktree::CLAUDE_MODES.len() {
+        state.spawn_input_cycle(1);
+    }
+    // Now go back to agent field and pick codex.
+    state.spawn_input_prev_field(); // field = 1
+    state.spawn_input_cycle(1); // agent → codex
+    match &state.popup {
+        PopupState::SpawnInput {
+            agent_idx,
+            mode_idx,
+            ..
+        } => {
+            assert_eq!(*agent_idx, 1);
+            // Mode must have reset to 0 (< codex mode list length).
+            assert!(*mode_idx < worktree::CODEX_MODES.len());
+        }
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn open_remove_confirm_for_unknown_pane_sets_flash_and_keeps_popup_closed() {
+    // Without a real tmux environment `display_message` returns an
+    // empty string, so the "not spawned" branch should fire, set the
+    // flash banner, and leave the popup state untouched.
+    let mut state = make_state(vec![]);
+    assert!(state.flash.is_none());
+    state.open_remove_confirm_for_pane("%nonexistent".into());
+    assert!(matches!(state.popup, PopupState::None));
+    let flash = state.flash.as_ref().expect("flash must be set");
+    assert!(
+        flash.0.contains("not spawned"),
+        "flash should mention the unspawned pane: {:?}",
+        flash.0
+    );
+}
+
+#[test]
+fn handle_mouse_click_routes_spawn_remove_targets_to_open_remove_confirm() {
+    // Stuff a synthetic × click target into layout.spawn_remove_targets
+    // and verify the click handler routes to
+    // `open_remove_confirm_for_pane`. Without a tmux env the call
+    // flashes "not spawned", which still proves the routing worked
+    // (otherwise flash would stay None).
+    use tmux_agent_sidebar::state::SpawnRemoveTarget;
+    let mut state = make_state(vec![]);
+    state.layout.spawn_remove_targets = vec![SpawnRemoveTarget {
+        rect: ratatui::layout::Rect::new(4, 5, 3, 1),
+        pane_id: "%42".into(),
+    }];
+    state.handle_mouse_click(5, 5);
+    let flash = state.flash.as_ref().expect("click should have fired");
+    assert!(
+        flash.0.contains("not spawned"),
+        "click on × target should call open_remove_confirm_for_pane: {:?}",
+        flash.0
+    );
 }

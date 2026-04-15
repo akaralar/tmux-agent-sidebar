@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::Command;
 
 pub const CLAUDE_AGENT: &str = "claude";
@@ -21,6 +22,13 @@ pub struct PaneInfo {
     pub pane_pid: Option<u32>,
     pub worktree_name: String,
     pub worktree_branch: String,
+    pub session_id: Option<String>,
+    pub session_name: String,
+    /// `true` when the window this pane lives in was created by the
+    /// sidebar's spawn flow (via the `@agent-sidebar-spawned` window
+    /// option). Used by the row renderer to show a clickable red `×`
+    /// in place of the usual `+` worktree marker.
+    pub sidebar_spawned: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,7 +51,9 @@ pub enum PermissionMode {
 }
 
 impl PermissionMode {
-    pub fn from_str(s: &str) -> Self {
+    /// Parse the permission-mode label written by agent hooks. Unknown
+    /// values fall back to `Default`.
+    pub fn from_label(s: &str) -> Self {
         match s {
             "plan" => Self::Plan,
             "acceptEdits" => Self::AcceptEdits,
@@ -90,7 +100,9 @@ pub struct SessionInfo {
 }
 
 impl AgentType {
-    pub fn from_str(s: &str) -> Option<Self> {
+    /// Parse the agent label set by hooks. Returns `None` for unknown
+    /// values so callers can skip non-agent panes.
+    pub fn from_label(s: &str) -> Option<Self> {
         match s {
             CLAUDE_AGENT => Some(Self::Claude),
             CODEX_AGENT => Some(Self::Codex),
@@ -112,7 +124,9 @@ impl AgentType {
 }
 
 impl PaneStatus {
-    pub fn from_str(s: &str) -> Self {
+    /// Parse the status label written by agent hooks. Unknown values
+    /// map to `Unknown`.
+    pub fn from_label(s: &str) -> Self {
         match s {
             "running" => Self::Running,
             "waiting" | "notification" => Self::Waiting,
@@ -142,25 +156,62 @@ pub fn run_tmux(args: &[&str]) -> Option<String> {
     }
 }
 
+/// Run a tmux command, returning trimmed stdout on success and stderr on failure.
+/// Used by the spawn/remove flow so the UI can surface a meaningful error message
+/// instead of a silent fallthrough.
+pub fn run_tmux_capture(args: &[&str]) -> Result<String, String> {
+    let output = Command::new("tmux")
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to spawn tmux: {e}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if stderr.is_empty() {
+            format!("tmux exited with status {}", output.status)
+        } else {
+            stderr
+        })
+    }
+}
+
+/// tmux `list-panes -F` format used by [`query_sessions`]. Every field is
+/// quoted with `#{q:...}` so embedded pipes in user content survive the split.
+const PANE_FORMAT: &str = "#{q:session_name}|#{q:window_id}|#{q:window_index}|#{q:window_name}|#{q:window_active}|#{q:automatic-rename}|#{q:pane_active}|#{q:@pane_status}|#{q:@pane_attention}|#{q:@pane_agent}|#{q:@pane_name}|#{q:pane_current_path}|#{q:pane_current_command}|#{q:@pane_role}|#{q:pane_id}|#{q:@pane_prompt}|#{q:@pane_prompt_source}|#{q:@pane_started_at}|#{q:@pane_wait_reason}|#{q:pane_pid}|#{q:@pane_subagents}|#{q:@pane_cwd}|#{q:@pane_permission_mode}|#{q:@pane_worktree_name}|#{q:@pane_worktree_branch}|#{q:@pane_session_id}|#{q:@agent-sidebar-spawned}";
+
+type SessionMap = indexmap::IndexMap<String, indexmap::IndexMap<String, WindowInfo>>;
+
+/// (window_id, pane_index_in_window, pane_pid) — the minimum info needed to
+/// later retarget a permission-mode update at the right pane.
+type CodexPidEntry = (String, usize, u32);
+
 /// Query all sessions, windows, and panes in a single `tmux list-panes -a` call
-/// plus one `list-sessions` call, instead of N+1 subprocess invocations.
+/// (plus one optional `ps` call to resolve Codex permission modes), instead of
+/// N+1 subprocess invocations.
 pub fn query_sessions() -> Vec<SessionInfo> {
-    // 1. Get all panes across all sessions in one call
-    let pane_format = "#{q:session_name}|#{q:window_id}|#{q:window_index}|#{q:window_name}|#{q:window_active}|#{q:automatic-rename}|#{q:pane_active}|#{q:@pane_status}|#{q:@pane_attention}|#{q:@pane_agent}|#{q:@pane_name}|#{q:pane_current_path}|#{q:pane_current_command}|#{q:@pane_role}|#{q:pane_id}|#{q:@pane_prompt}|#{q:@pane_prompt_source}|#{q:@pane_started_at}|#{q:@pane_wait_reason}|#{q:pane_pid}|#{q:@pane_subagents}|#{q:@pane_cwd}|#{q:@pane_permission_mode}|#{q:@pane_worktree_name}|#{q:@pane_worktree_branch}";
-    let all_panes_output = match run_tmux(&["list-panes", "-a", "-F", pane_format]) {
+    let all_panes_output = match run_tmux(&["list-panes", "-a", "-F", PANE_FORMAT]) {
         Some(s) => s,
         None => return vec![],
     };
 
-    // 2. Build the session→window→pane hierarchy
-    use indexmap::IndexMap;
-    let mut sessions_map: IndexMap<String, IndexMap<String, WindowInfo>> = IndexMap::new();
-    // Track (window_id, pane_index_in_window, pid) for codex permission mode resolution
-    let mut codex_pids: Vec<(String, usize, u32)> = Vec::new();
+    let (mut sessions_map, codex_pids) = build_session_hierarchy(&all_panes_output);
+    if !codex_pids.is_empty() {
+        resolve_codex_permission_modes(&mut sessions_map, &codex_pids);
+    }
+    finalize_sessions(sessions_map)
+}
+
+/// Parse the raw `tmux list-panes` output into an indexed session→window→pane
+/// hierarchy. Also returns every Codex pane's pid so the caller can resolve
+/// permission modes in a single `ps` pass.
+fn build_session_hierarchy(all_panes_output: &str) -> (SessionMap, Vec<CodexPidEntry>) {
+    let mut sessions_map: SessionMap = indexmap::IndexMap::new();
+    let mut codex_pids: Vec<CodexPidEntry> = Vec::new();
 
     for line in all_panes_output.lines() {
         let parts = split_tmux_fields(line, '|');
-        if parts.len() < 25 {
+        if parts.len() < 27 {
             continue;
         }
 
@@ -181,56 +232,77 @@ pub fn query_sessions() -> Vec<SessionInfo> {
             });
 
         if let Some(pane) = parse_pane_line(&pane_line) {
-            if pane.agent == AgentType::Codex {
-                if let Some(pid) = pane.pane_pid {
-                    codex_pids.push((window_id.to_string(), window.panes.len(), pid));
-                }
+            if pane.agent == AgentType::Codex
+                && let Some(pid) = pane.pane_pid
+            {
+                codex_pids.push((window_id.to_string(), window.panes.len(), pid));
             }
             window.panes.push(pane);
         }
     }
 
-    // 3. Single `ps` call for all Codex panes across all windows
-    if !codex_pids.is_empty() {
-        if let Ok(output) = Command::new("ps").args(["-eo", "ppid,args"]).output() {
-            if output.status.success() {
-                let ps_out = String::from_utf8_lossy(&output.stdout);
-                for (_session_name, windows) in &mut sessions_map {
-                    for (window_id, window) in windows.iter_mut() {
-                        let window_pids: Vec<(usize, u32)> = codex_pids
-                            .iter()
-                            .filter(|(wid, _, _)| wid == window_id)
-                            .map(|(_, idx, pid)| (*idx, *pid))
-                            .collect();
-                        if !window_pids.is_empty() {
-                            apply_codex_permission_modes(&mut window.panes, &window_pids, &ps_out);
-                        }
-                    }
-                }
+    (sessions_map, codex_pids)
+}
+
+/// Single `ps` pass that fans out Codex permission mode updates to every
+/// Codex pane across every window. No-op if `ps` fails.
+fn resolve_codex_permission_modes(sessions_map: &mut SessionMap, codex_pids: &[CodexPidEntry]) {
+    let output = match Command::new("ps")
+        .args(["-eo", "pid=,ppid=,comm=,args="])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return,
+    };
+
+    let ps_out = String::from_utf8_lossy(&output.stdout);
+    let (children_of, info_by_pid) = parse_ps_processes(&ps_out);
+
+    for windows in sessions_map.values_mut() {
+        for (window_id, window) in windows.iter_mut() {
+            let window_pids: Vec<(usize, u32)> = codex_pids
+                .iter()
+                .filter(|(wid, _, _)| wid == window_id)
+                .map(|(_, idx, pid)| (*idx, *pid))
+                .collect();
+            if window_pids.is_empty() {
+                continue;
             }
+            apply_codex_permission_modes(
+                &mut window.panes,
+                &window_pids,
+                &children_of,
+                &info_by_pid,
+            );
         }
     }
+}
 
-    // 4. Assemble final Vec<SessionInfo>
+/// Flatten the session→window hierarchy into a `Vec<SessionInfo>`, dropping
+/// any windows whose `parse_pane_line` filtering left them empty, and any
+/// sessions whose windows are all empty as a result.
+fn finalize_sessions(sessions_map: SessionMap) -> Vec<SessionInfo> {
     let mut sessions = Vec::new();
     for (session_name, windows) in sessions_map {
-        let windows: Vec<WindowInfo> = windows.into_values().collect();
-        if windows.iter().any(|w| !w.panes.is_empty()) {
+        let windows: Vec<WindowInfo> = windows
+            .into_values()
+            .filter(|w| !w.panes.is_empty())
+            .collect();
+        if !windows.is_empty() {
             sessions.push(SessionInfo {
                 session_name,
                 windows,
             });
         }
     }
-
     sessions
 }
 
 /// Parse a single pane line from `tmux list-panes -F`.
-/// Returns None if the line has fewer than 19 fields, is a sidebar, or has no agent.
+/// Returns None if the line has fewer than 20 fields, is a sidebar, or has no agent.
 pub(crate) fn parse_pane_line(line: &str) -> Option<PaneInfo> {
     let parts = split_tmux_fields(line, '|');
-    if parts.len() < 19 {
+    if parts.len() < 21 {
         return None;
     }
 
@@ -238,7 +310,15 @@ pub(crate) fn parse_pane_line(line: &str) -> Option<PaneInfo> {
         return None;
     }
 
-    let agent = AgentType::from_str(&parts[3])?;
+    let agent = AgentType::from_label(&parts[3])?;
+    let current_command = parts[6].as_str();
+
+    // Codex panes can leave stale tmux metadata behind after the agent exits
+    // and the pane falls back to the user's shell. In that case, ignore the
+    // pane so the sidebar stops displaying a non-existent Codex session.
+    if agent == AgentType::Codex && is_shell_command(current_command) {
+        return None;
+    }
 
     let pane_pid: Option<u32> = parts[13].parse().ok();
 
@@ -253,7 +333,7 @@ pub(crate) fn parse_pane_line(line: &str) -> Option<PaneInfo> {
     // Claude: read permission_mode from hook-set tmux variable
     // Codex: no permission_mode in hooks, detect from process args later
     let permission_mode = if agent == AgentType::Claude {
-        PermissionMode::from_str(&parts[16])
+        PermissionMode::from_label(&parts[16])
     } else {
         PermissionMode::Default
     };
@@ -264,9 +344,15 @@ pub(crate) fn parse_pane_line(line: &str) -> Option<PaneInfo> {
     // Sanitize prompt: replace pipes/newlines, filter system-injected messages, truncate
     let prompt = sanitize_prompt(&parts[9]);
 
+    let session_id = if parts[19].is_empty() {
+        None
+    } else {
+        Some(parts[19].to_string())
+    };
+
     Some(PaneInfo {
         pane_active: parts[0] == "1",
-        status: PaneStatus::from_str(&parts[1]),
+        status: PaneStatus::from_label(&parts[1]),
         attention: !parts[2].is_empty(),
         agent,
         path,
@@ -281,7 +367,45 @@ pub(crate) fn parse_pane_line(line: &str) -> Option<PaneInfo> {
         pane_pid,
         worktree_name: parts[17].to_string(),
         worktree_branch: parts[18].to_string(),
+        session_id,
+        session_name: String::new(),
+        sidebar_spawned: parts[20] == "1",
     })
+}
+
+fn is_shell_command(command: &str) -> bool {
+    const SHELL_COMMANDS: &[&str] = &[
+        "ash",
+        "bash",
+        "csh",
+        "dash",
+        "elvish",
+        "fish",
+        "ksh",
+        "mksh",
+        "nu",
+        "oksh",
+        "pdksh",
+        "posh",
+        "powershell",
+        "powershell.exe",
+        "pwsh",
+        "sh",
+        "tcsh",
+        "xonsh",
+        "zsh",
+    ];
+
+    let Some(token) = command.split_whitespace().next() else {
+        return false;
+    };
+    let executable = Path::new(token)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(token)
+        .to_ascii_lowercase();
+
+    SHELL_COMMANDS.contains(&executable.as_str())
 }
 
 /// Detect Codex permission mode from process args (--full-auto, --yolo, etc.)
@@ -295,24 +419,96 @@ fn detect_codex_permission_mode(args: &str) -> PermissionMode {
     PermissionMode::Default
 }
 
+#[derive(Debug, Clone)]
+struct ProcessInfo {
+    comm: String,
+    args: String,
+}
+
+fn parse_ps_processes(
+    ps_out: &str,
+) -> (
+    std::collections::HashMap<u32, Vec<u32>>,
+    std::collections::HashMap<u32, ProcessInfo>,
+) {
+    let mut children_of: std::collections::HashMap<u32, Vec<u32>> =
+        std::collections::HashMap::new();
+    let mut info_by_pid: std::collections::HashMap<u32, ProcessInfo> =
+        std::collections::HashMap::new();
+
+    for line in ps_out.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(pid_str) = parts.next() else {
+            continue;
+        };
+        let Some(ppid_str) = parts.next() else {
+            continue;
+        };
+        let Ok(pid) = pid_str.parse::<u32>() else {
+            continue;
+        };
+        let Ok(ppid) = ppid_str.parse::<u32>() else {
+            continue;
+        };
+        let Some(comm) = parts.next() else {
+            continue;
+        };
+
+        children_of.entry(ppid).or_default().push(pid);
+        info_by_pid.insert(
+            pid,
+            ProcessInfo {
+                comm: comm.to_string(),
+                args: parts.collect::<Vec<_>>().join(" "),
+            },
+        );
+    }
+
+    (children_of, info_by_pid)
+}
+
+fn descendant_pids(
+    seed_pids: &[u32],
+    children_of: &std::collections::HashMap<u32, Vec<u32>>,
+) -> std::collections::HashSet<u32> {
+    let mut seen = std::collections::HashSet::new();
+    let mut queue: std::collections::VecDeque<u32> = seed_pids.iter().copied().collect();
+
+    while let Some(pid) = queue.pop_front() {
+        if !seen.insert(pid) {
+            continue;
+        }
+        if let Some(children) = children_of.get(&pid) {
+            for &child in children {
+                if !seen.contains(&child) {
+                    queue.push_back(child);
+                }
+            }
+        }
+    }
+
+    seen
+}
+
 fn apply_codex_permission_modes(
     panes: &mut [PaneInfo],
     pids_to_check: &[(usize, u32)],
-    ps_out: &str,
+    children_of: &std::collections::HashMap<u32, Vec<u32>>,
+    info_by_pid: &std::collections::HashMap<u32, ProcessInfo>,
 ) {
     for (idx, pid) in pids_to_check {
-        let pid_str = pid.to_string();
-        for line in ps_out.lines() {
-            let trimmed = line.trim();
-            if let Some((ppid_str, args)) = trimmed.split_once(char::is_whitespace) {
-                if ppid_str.trim() != pid_str {
-                    continue;
-                }
-                if let Some(pane) = panes.get_mut(*idx) {
-                    pane.permission_mode = detect_codex_permission_mode(args);
-                    if pane.permission_mode != PermissionMode::Default {
-                        break;
-                    }
+        let descendants = descendant_pids(&[*pid], children_of);
+        for descendant in descendants {
+            let Some(info) = info_by_pid.get(&descendant) else {
+                continue;
+            };
+            if info.comm != CODEX_AGENT {
+                continue;
+            }
+            if let Some(pane) = panes.get_mut(*idx) {
+                pane.permission_mode = detect_codex_permission_mode(&info.args);
+                if pane.permission_mode != PermissionMode::Default {
+                    break;
                 }
             }
         }
@@ -324,8 +520,13 @@ fn sanitize_prompt(raw: &str) -> String {
     if raw.is_empty() {
         return String::new();
     }
-    // Filter system-injected messages (e.g. <task-notification>, <system-reminder>)
-    if raw.contains('<') && raw.contains('>') {
+    // Filter known system-injected messages. Avoid the old broad angle-bracket
+    // check so legitimate prompts containing comparisons or code snippets
+    // still render.
+    if raw.contains("<task-notification>")
+        || raw.contains("<system-reminder>")
+        || raw.contains("<task-status>")
+    {
         return String::new();
     }
     if raw.chars().count() > 200 {
@@ -513,23 +714,194 @@ pub fn focused_pane_path(sidebar_pane: &str) -> Option<String> {
 }
 
 pub fn set_pane_option(pane: &str, key: &str, value: &str) {
+    #[cfg(test)]
+    if test_mock::intercept_set(pane, key, value) {
+        return;
+    }
     let _ = run_tmux(&["set", "-t", pane, "-p", key, value]);
 }
 
 pub fn unset_pane_option(pane: &str, key: &str) {
+    #[cfg(test)]
+    if test_mock::intercept_unset(pane, key) {
+        return;
+    }
     let _ = run_tmux(&["set", "-t", pane, "-p", "-u", key]);
 }
 
 pub fn get_pane_option_value(pane: &str, key: &str) -> String {
+    #[cfg(test)]
+    if let Some(value) = test_mock::intercept_get(pane, key) {
+        return value;
+    }
     run_tmux(&["show", "-t", pane, "-pv", key])
         .map(|s| s.trim().to_string())
         .unwrap_or_default()
+}
+
+/// Per-thread in-memory tmux pane store used by tests. Activated by
+/// installing a mock with [`test_mock::install`]; until then, all
+/// `set/unset/get_pane_option*` calls fall through to the real `tmux`
+/// command. The whole module is `cfg(test)` so it has zero cost in
+/// release builds.
+#[cfg(test)]
+pub mod test_mock {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    type Store = HashMap<(String, String), String>;
+
+    thread_local! {
+        static MOCK: RefCell<Option<Store>> = const { RefCell::new(None) };
+    }
+
+    /// Install a fresh mock store for the current thread. Returns a guard
+    /// that uninstalls the mock on drop so concurrent tests don't leak
+    /// state across each other.
+    pub fn install() -> MockGuard {
+        MOCK.with(|m| *m.borrow_mut() = Some(Store::new()));
+        MockGuard
+    }
+
+    pub struct MockGuard;
+
+    impl Drop for MockGuard {
+        fn drop(&mut self) {
+            MOCK.with(|m| *m.borrow_mut() = None);
+        }
+    }
+
+    /// Pre-populate a pane option in the mock store. Call after `install`.
+    pub fn set(pane: &str, key: &str, value: &str) {
+        MOCK.with(|m| {
+            if let Some(store) = m.borrow_mut().as_mut() {
+                store.insert((pane.to_string(), key.to_string()), value.to_string());
+            }
+        });
+    }
+
+    /// Read a pane option from the mock store. Returns `None` if no mock
+    /// is installed (so production code paths still hit real tmux).
+    pub fn get(pane: &str, key: &str) -> Option<String> {
+        MOCK.with(|m| {
+            m.borrow().as_ref().map(|store| {
+                store
+                    .get(&(pane.to_string(), key.to_string()))
+                    .cloned()
+                    .unwrap_or_default()
+            })
+        })
+    }
+
+    /// Returns true if a key exists in the mock store. Useful for
+    /// asserting that a teardown DID NOT remove a key.
+    pub fn contains(pane: &str, key: &str) -> bool {
+        MOCK.with(|m| {
+            m.borrow()
+                .as_ref()
+                .is_some_and(|store| store.contains_key(&(pane.to_string(), key.to_string())))
+        })
+    }
+
+    pub(super) fn intercept_set(pane: &str, key: &str, value: &str) -> bool {
+        MOCK.with(|m| {
+            if let Some(store) = m.borrow_mut().as_mut() {
+                store.insert((pane.to_string(), key.to_string()), value.to_string());
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    pub(super) fn intercept_unset(pane: &str, key: &str) -> bool {
+        MOCK.with(|m| {
+            if let Some(store) = m.borrow_mut().as_mut() {
+                store.remove(&(pane.to_string(), key.to_string()));
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    pub(super) fn intercept_get(pane: &str, key: &str) -> Option<String> {
+        MOCK.with(|m| {
+            m.borrow().as_ref().map(|store| {
+                store
+                    .get(&(pane.to_string(), key.to_string()))
+                    .cloned()
+                    .unwrap_or_default()
+            })
+        })
+    }
 }
 
 pub fn display_message(target: &str, format: &str) -> String {
     run_tmux(&["display-message", "-t", target, "-p", format])
         .map(|s| s.trim().to_string())
         .unwrap_or_default()
+}
+
+/// Resolve the session name containing `pane_id`. Returns `None` when tmux
+/// can't find the pane (e.g. it has just been closed).
+pub fn pane_session_name(pane_id: &str) -> Option<String> {
+    run_tmux(&["display-message", "-t", pane_id, "-p", "#{session_name}"])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Create a new tmux window in `session` whose initial cwd is `cwd` and whose
+/// title is `name`. Returns `(pane_id, window_id)` on success — the window id
+/// is used by the spawn flow to set markers at window scope so split panes
+/// (e.g. Claude Code subagents) inherit them.
+pub fn new_window(session: &str, cwd: &str, name: &str) -> Result<(String, String), String> {
+    let out = run_tmux_capture(&[
+        "new-window",
+        "-t",
+        session,
+        "-c",
+        cwd,
+        "-n",
+        name,
+        "-P",
+        "-F",
+        "#{pane_id} #{window_id}",
+    ])?;
+    let mut parts = out.split_whitespace();
+    let pane = parts
+        .next()
+        .ok_or_else(|| "new-window returned no pane id".to_string())?
+        .to_string();
+    let window = parts
+        .next()
+        .ok_or_else(|| "new-window returned no window id".to_string())?
+        .to_string();
+    Ok((pane, window))
+}
+
+/// Set a user option at window scope. Needed so markers survive through
+/// split panes that inherit from the window. Returns an error so the
+/// spawn flow can roll back when a marker the remove path relies on
+/// cannot be written — silently dropping the failure would leave an
+/// un-removable pane.
+pub fn set_window_option(window: &str, key: &str, value: &str) -> Result<(), String> {
+    run_tmux_capture(&["set", "-w", "-t", window, key, value]).map(|_| ())
+}
+
+/// Send a command line to `target` (a pane id) and press Enter so the shell
+/// executes it. Used to launch the agent binary right after window creation.
+/// The text is sent with `-l` (literal) so nothing in `command` can collide
+/// with tmux key names (e.g. `Tab`, `BSpace`); Enter is issued as a
+/// separate invocation so it's interpreted as the Return key.
+pub fn send_command(target: &str, command: &str) -> Result<(), String> {
+    run_tmux_capture(&["send-keys", "-t", target, "-l", command])?;
+    run_tmux_capture(&["send-keys", "-t", target, "Enter"]).map(|_| ())
+}
+
+/// Kill the tmux window identified by `window_id` (e.g. `@7`).
+pub fn kill_window(window_id: &str) -> Result<(), String> {
+    run_tmux_capture(&["kill-window", "-t", window_id]).map(|_| ())
 }
 
 pub fn select_pane(pane_id: &str) {
@@ -556,13 +928,13 @@ mod tests {
 
     #[test]
     fn pane_status_from_str_all_variants() {
-        assert_eq!(PaneStatus::from_str("running"), PaneStatus::Running);
-        assert_eq!(PaneStatus::from_str("waiting"), PaneStatus::Waiting);
-        assert_eq!(PaneStatus::from_str("notification"), PaneStatus::Waiting);
-        assert_eq!(PaneStatus::from_str("idle"), PaneStatus::Idle);
-        assert_eq!(PaneStatus::from_str("error"), PaneStatus::Error);
-        assert_eq!(PaneStatus::from_str("anything"), PaneStatus::Unknown);
-        assert_eq!(PaneStatus::from_str(""), PaneStatus::Unknown);
+        assert_eq!(PaneStatus::from_label("running"), PaneStatus::Running);
+        assert_eq!(PaneStatus::from_label("waiting"), PaneStatus::Waiting);
+        assert_eq!(PaneStatus::from_label("notification"), PaneStatus::Waiting);
+        assert_eq!(PaneStatus::from_label("idle"), PaneStatus::Idle);
+        assert_eq!(PaneStatus::from_label("error"), PaneStatus::Error);
+        assert_eq!(PaneStatus::from_label("anything"), PaneStatus::Unknown);
+        assert_eq!(PaneStatus::from_label(""), PaneStatus::Unknown);
     }
 
     #[test]
@@ -576,10 +948,10 @@ mod tests {
 
     #[test]
     fn agent_type_from_str_all() {
-        assert_eq!(AgentType::from_str("claude"), Some(AgentType::Claude));
-        assert_eq!(AgentType::from_str("codex"), Some(AgentType::Codex));
-        assert_eq!(AgentType::from_str("unknown"), None);
-        assert_eq!(AgentType::from_str(""), None);
+        assert_eq!(AgentType::from_label("claude"), Some(AgentType::Claude));
+        assert_eq!(AgentType::from_label("codex"), Some(AgentType::Codex));
+        assert_eq!(AgentType::from_label("unknown"), None);
+        assert_eq!(AgentType::from_label(""), None);
     }
 
     #[test]
@@ -591,20 +963,29 @@ mod tests {
 
     #[test]
     fn permission_mode_from_str_all() {
-        assert_eq!(PermissionMode::from_str("default"), PermissionMode::Default);
-        assert_eq!(PermissionMode::from_str("plan"), PermissionMode::Plan);
         assert_eq!(
-            PermissionMode::from_str("acceptEdits"),
+            PermissionMode::from_label("default"),
+            PermissionMode::Default
+        );
+        assert_eq!(PermissionMode::from_label("plan"), PermissionMode::Plan);
+        assert_eq!(
+            PermissionMode::from_label("acceptEdits"),
             PermissionMode::AcceptEdits
         );
-        assert_eq!(PermissionMode::from_str("auto"), PermissionMode::Auto);
-        assert_eq!(PermissionMode::from_str("dontAsk"), PermissionMode::DontAsk);
+        assert_eq!(PermissionMode::from_label("auto"), PermissionMode::Auto);
         assert_eq!(
-            PermissionMode::from_str("bypassPermissions"),
+            PermissionMode::from_label("dontAsk"),
+            PermissionMode::DontAsk
+        );
+        assert_eq!(
+            PermissionMode::from_label("bypassPermissions"),
             PermissionMode::BypassPermissions
         );
-        assert_eq!(PermissionMode::from_str(""), PermissionMode::Default);
-        assert_eq!(PermissionMode::from_str("unknown"), PermissionMode::Default);
+        assert_eq!(PermissionMode::from_label(""), PermissionMode::Default);
+        assert_eq!(
+            PermissionMode::from_label("unknown"),
+            PermissionMode::Default
+        );
     }
 
     #[test]
@@ -622,8 +1003,8 @@ mod tests {
         // Upstream docs list "auto" and "dontAsk" as separate permission_mode
         // values (code.claude.com/docs/en/hooks "Common input fields"), so
         // they must not collapse to the same variant.
-        let auto = PermissionMode::from_str("auto");
-        let dont_ask = PermissionMode::from_str("dontAsk");
+        let auto = PermissionMode::from_label("auto");
+        let dont_ask = PermissionMode::from_label("dontAsk");
         assert_eq!(auto, PermissionMode::Auto);
         assert_eq!(dont_ask, PermissionMode::DontAsk);
         assert_ne!(auto, dont_ask);
@@ -669,12 +1050,59 @@ mod tests {
             pane_pid: None,
             worktree_name: String::new(),
             worktree_branch: String::new(),
+            session_id: None,
+            session_name: String::new(),
+            sidebar_spawned: false,
         }];
         let pids = vec![(0, 101)];
-        let ps_out = " 101 /bin/codex --full-auto\n";
+        let ps_out = "101 1 bash /bin/bash\n102 101 codex /bin/codex --full-auto\n";
+        let (children_of, info_by_pid) = parse_ps_processes(ps_out);
 
-        apply_codex_permission_modes(&mut panes, &pids, ps_out);
+        apply_codex_permission_modes(&mut panes, &pids, &children_of, &info_by_pid);
         assert_eq!(panes[0].permission_mode, PermissionMode::Auto);
+    }
+
+    #[test]
+    fn apply_codex_permission_modes_follows_shell_wrappers() {
+        let mut panes = vec![PaneInfo {
+            pane_id: "%1".into(),
+            pane_active: false,
+            status: PaneStatus::Idle,
+            attention: false,
+            agent: AgentType::Codex,
+            path: "/tmp".into(),
+            current_command: String::new(),
+            prompt: String::new(),
+            prompt_is_response: false,
+            started_at: None,
+            wait_reason: String::new(),
+            permission_mode: PermissionMode::Default,
+            subagents: vec![],
+            pane_pid: None,
+            worktree_name: String::new(),
+            worktree_branch: String::new(),
+            session_id: None,
+            session_name: String::new(),
+            sidebar_spawned: false,
+        }];
+        let pids = vec![(0, 101)];
+        let ps_out = "101 1 bash /bin/bash\n102 101 sh -c wrapper\n103 102 codex /usr/local/bin/codex --yolo\n";
+        let (children_of, info_by_pid) = parse_ps_processes(ps_out);
+
+        apply_codex_permission_modes(&mut panes, &pids, &children_of, &info_by_pid);
+        assert_eq!(panes[0].permission_mode, PermissionMode::BypassPermissions);
+    }
+
+    #[test]
+    fn parse_ps_processes_preserves_spaced_args() {
+        let (children_of, info_by_pid) = parse_ps_processes(
+            "100 1 codex /Applications/Codex App/bin/codex --full-auto\n101 100 sh sh -c wrapper\n",
+        );
+
+        assert_eq!(children_of.get(&1).cloned(), Some(vec![100]));
+        let info = info_by_pid.get(&100).expect("process info");
+        assert_eq!(info.comm, "codex");
+        assert_eq!(info.args, "/Applications/Codex App/bin/codex --full-auto");
     }
 
     // ─── sanitize_prompt tests ──────────────────────────────────────
@@ -694,6 +1122,11 @@ mod tests {
     #[test]
     fn sanitize_prompt_passes_normal_text() {
         assert_eq!(sanitize_prompt("fix the bug"), "fix the bug");
+    }
+
+    #[test]
+    fn sanitize_prompt_keeps_legitimate_angle_brackets() {
+        assert_eq!(sanitize_prompt("1 < 2 and 3 > 1"), "1 < 2 and 3 > 1");
     }
 
     #[test]
@@ -801,6 +1234,8 @@ mod tests {
             "auto",               // 16: @pane_permission_mode
             "",                   // 17: @pane_worktree_name
             "",                   // 18: @pane_worktree_branch
+            "",                   // 19: @pane_session_id
+            "",                   // 20: @agent-sidebar-spawned
         ]
     }
 
@@ -823,6 +1258,25 @@ mod tests {
     }
 
     #[test]
+    fn parse_pane_line_sidebar_spawned_field() {
+        let mut fields = full_fields();
+        fields[20] = "1";
+        let pane = parse_pane_line(&make_pane_line(&fields)).unwrap();
+        assert!(pane.sidebar_spawned);
+
+        fields[20] = "";
+        let pane = parse_pane_line(&make_pane_line(&fields)).unwrap();
+        assert!(!pane.sidebar_spawned);
+
+        fields[20] = "0";
+        let pane = parse_pane_line(&make_pane_line(&fields)).unwrap();
+        assert!(
+            !pane.sidebar_spawned,
+            "any value other than `1` is treated as false"
+        );
+    }
+
+    #[test]
     fn parse_pane_line_response_prompt_source() {
         let mut fields = full_fields();
         fields[10] = "response"; // @pane_prompt_source
@@ -832,7 +1286,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_pane_line_rejects_fewer_than_19_fields() {
+    fn parse_pane_line_rejects_fewer_than_21_fields() {
         // Only 15 fields — should be rejected
         let fields_15 =
             "1|running||claude|name|/path|fish||%1|prompt|1700000000||12345|Explore|/cwd";
@@ -841,11 +1295,11 @@ mod tests {
             "15 fields should be rejected"
         );
 
-        // 18 fields — still rejected
-        let fields_18 = "1|running||claude|name|/path|fish||%1|prompt|user|1700000000||12345|Explore|/cwd|auto|";
+        // 20 fields — still rejected (need 21)
+        let fields_20 = "1|running||claude|name|/path|fish||%1|prompt|user|1700000000||12345|Explore|/cwd|auto|||";
         assert!(
-            parse_pane_line(fields_18).is_none(),
-            "18 fields should be rejected"
+            parse_pane_line(fields_20).is_none(),
+            "20 fields should be rejected"
         );
     }
 
@@ -1009,7 +1463,8 @@ mod tests {
     fn parse_pane_line_codex_ignores_permission_mode_field() {
         let mut fields = full_fields();
         fields[3] = "codex";
-        fields[15] = "auto"; // should be ignored for codex
+        fields[6] = "node";
+        fields[16] = "auto"; // should be ignored for codex
         let line = make_pane_line(&fields);
         let pane = parse_pane_line(&line).unwrap();
         assert_eq!(
@@ -1017,5 +1472,112 @@ mod tests {
             PermissionMode::Default,
             "codex should not read permission_mode from tmux variable"
         );
+    }
+
+    #[test]
+    fn parse_pane_line_rejects_stale_codex_shell_pane() {
+        let mut fields = full_fields();
+        fields[3] = "codex";
+        fields[6] = "zsh";
+        let line = make_pane_line(&fields);
+        assert!(
+            parse_pane_line(&line).is_none(),
+            "codex metadata on a shell pane should be treated as stale"
+        );
+    }
+
+    #[test]
+    fn parse_pane_line_rejects_stale_codex_shell_pane_with_path_and_args() {
+        let mut fields = full_fields();
+        fields[3] = "codex";
+        fields[6] = "/usr/local/bin/PwSh -l";
+        let line = make_pane_line(&fields);
+        assert!(
+            parse_pane_line(&line).is_none(),
+            "shell detection should handle paths, args, and case differences"
+        );
+    }
+
+    // ─── finalize_sessions ─────────────────────────────────────────
+
+    #[test]
+    fn finalize_sessions_drops_windows_with_no_panes() {
+        // Regression: build_session_hierarchy() creates a WindowInfo as
+        // soon as it sees a tmux row, but parse_pane_line() may then
+        // reject every pane in that window (sidebar / shell / unknown).
+        // finalize_sessions must filter out the resulting empty windows
+        // so downstream code never has to special-case them.
+        let mut sessions_map: SessionMap = indexmap::IndexMap::new();
+        let entry = sessions_map.entry("main".to_string()).or_default();
+        entry.insert(
+            "@1".to_string(),
+            WindowInfo {
+                window_id: "@1".into(),
+                window_name: "with-pane".into(),
+                window_active: true,
+                auto_rename: false,
+                panes: vec![PaneInfo {
+                    pane_id: "%1".into(),
+                    pane_active: true,
+                    status: PaneStatus::Running,
+                    attention: false,
+                    agent: AgentType::Claude,
+                    path: "/repo".into(),
+                    current_command: String::new(),
+                    prompt: String::new(),
+                    prompt_is_response: false,
+                    started_at: None,
+                    wait_reason: String::new(),
+                    permission_mode: PermissionMode::Default,
+                    subagents: vec![],
+                    pane_pid: None,
+                    worktree_name: String::new(),
+                    worktree_branch: String::new(),
+                    session_id: None,
+                    session_name: String::new(),
+                    sidebar_spawned: false,
+                }],
+            },
+        );
+        entry.insert(
+            "@2".to_string(),
+            WindowInfo {
+                window_id: "@2".into(),
+                window_name: "empty".into(),
+                window_active: false,
+                auto_rename: false,
+                panes: vec![],
+            },
+        );
+
+        let sessions = finalize_sessions(sessions_map);
+
+        assert_eq!(sessions.len(), 1, "session should survive");
+        assert_eq!(
+            sessions[0].windows.len(),
+            1,
+            "empty window must be filtered out"
+        );
+        assert_eq!(sessions[0].windows[0].window_id, "@1");
+    }
+
+    #[test]
+    fn finalize_sessions_drops_session_when_all_windows_are_empty() {
+        let mut sessions_map: SessionMap = indexmap::IndexMap::new();
+        let entry = sessions_map.entry("dead".to_string()).or_default();
+        entry.insert(
+            "@9".to_string(),
+            WindowInfo {
+                window_id: "@9".into(),
+                window_name: "ghost".into(),
+                window_active: false,
+                auto_rename: false,
+                panes: vec![],
+            },
+        );
+
+        let sessions = finalize_sessions(sessions_map);
+
+        assert!(sessions.is_empty(), "session with no panes must be dropped");
     }
 }

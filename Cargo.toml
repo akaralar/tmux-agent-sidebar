@@ -1,18 +1,24 @@
 [package]
 name = "tmux-agent-sidebar"
-version = "0.4.3"
+version = "0.6.0"
 edition = "2024"
 license = "MIT"
 description = "A tmux sidebar that monitors AI coding agents across all windows and sessions in real-time"
 repository = "https://github.com/hiroppy/tmux-agent-sidebar"
 
+[features]
+# Force-display notices (version, missing hooks, claude plugin) even when
+# none are actually pending. Useful for iterating on the notices popup UI.
+debug = []
+
 [dependencies]
 ratatui = "=0.30.0"
 crossterm = "=0.29.0"
 unicode-width = "=0.2.2"
-libc = "=0.2.184"
+libc = "=0.2.185"
 indexmap = "=2.14.0"
 serde_json = "=1.0.149"
+arboard = { version = "=3.6.1", default-features = false }
 
 [dev-dependencies]
 indoc = "=2.0.7"
