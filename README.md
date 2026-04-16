@@ -13,7 +13,7 @@
 - **Worktree-aware grouping** — Groups agents by the same repo, including worktrees, so related panes stay together
 - **Spawn & remove worktrees from the sidebar** — Press `n` (or click `+` next to a repo header) to create a new `git worktree`, open a tmux window in it, and launch an agent in one step. Remove it later with `x`, or click the red `×` next to the branch on any spawn-created row
 - **Pane metadata** — Shows listening localhost ports and execution command info for each pane
-- **Desktop notifications** — High-signal alerts for task completion/failure, permission prompts, long waits, and newly opened ports
+- **Desktop notifications** — Hook-driven OS alerts for task completion/failure and permission prompts
 
 ## Agent Pane
 
