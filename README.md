@@ -326,7 +326,24 @@ Delivery depends on the platform:
 
 If the required notification command is missing, the feature quietly disables itself.
 
-Notifications are titled `repo / agent` when repo information is available, with the event summary in the body.
+Notification layout:
+
+```
+┌─────────────────────────────────────────────┐
+│  repo (branch) / agent          ← title     │
+│  <event body>                   ← body      │
+└─────────────────────────────────────────────┘
+```
+
+Title falls back to `repo / agent` when the branch is unknown, and to `agent` alone when there is no repo. Body per event:
+
+| Event              | Body                                          | Fallback               |
+|--------------------|-----------------------------------------------|------------------------|
+| `stop`             | assistant's last message (truncated to ~240c) | `Task completed`       |
+| `notification`     | wait reason                                   | `Permission required`  |
+| `task_completed`   | `Task completed: {task_subject}`              | `Task completed`       |
+| `stop_failure`     | `Task failed: {error}`                        | `Task failed`          |
+| `permission_denied` | (no payload)                                 | `Permission required`  |
 
 ## Accessing Agent Status from Scripts
 
