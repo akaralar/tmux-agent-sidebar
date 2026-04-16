@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use std::process::Stdio;
 use std::thread::sleep;
@@ -17,14 +17,58 @@ pub enum DesktopNotificationKind {
     PermissionRequired,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DesktopNotificationEvent {
+    Stop,
+    Notification,
+    TaskCompleted,
+    StopFailure,
+    PermissionDenied,
+}
+
+impl DesktopNotificationEvent {
+    pub const ALL: [Self; 5] = [
+        Self::Stop,
+        Self::Notification,
+        Self::TaskCompleted,
+        Self::StopFailure,
+        Self::PermissionDenied,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stop => "stop",
+            Self::Notification => "notification",
+            Self::TaskCompleted => "task_completed",
+            Self::StopFailure => "stop_failure",
+            Self::PermissionDenied => "permission_denied",
+        }
+    }
+
+    fn from_token(token: &str) -> Option<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "stop" => Some(Self::Stop),
+            "notification" => Some(Self::Notification),
+            "task_completed" => Some(Self::TaskCompleted),
+            "stop_failure" => Some(Self::StopFailure),
+            "permission_denied" => Some(Self::PermissionDenied),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopNotificationSettings {
     pub enabled: bool,
+    pub events: HashSet<DesktopNotificationEvent>,
 }
 
 impl Default for DesktopNotificationSettings {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            events: DesktopNotificationEvent::ALL.iter().copied().collect(),
+        }
     }
 }
 
@@ -42,12 +86,33 @@ impl DesktopNotificationSettings {
         if settings.enabled && !backend_available {
             settings.enabled = false;
         }
+        if let Some(raw) = opts.get("@sidebar_notifications_events") {
+            settings.events = parse_events(raw);
+        }
         settings
     }
 
     pub fn from_tmux() -> Self {
         Self::from_tmux_options(&tmux::get_all_global_options())
     }
+
+    pub fn event_enabled(&self, event: DesktopNotificationEvent) -> bool {
+        self.events.contains(&event)
+    }
+}
+
+fn parse_events(raw: &str) -> HashSet<DesktopNotificationEvent> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return HashSet::new();
+    }
+    if trimmed.eq_ignore_ascii_case("all") {
+        return DesktopNotificationEvent::ALL.iter().copied().collect();
+    }
+    trimmed
+        .split(',')
+        .filter_map(DesktopNotificationEvent::from_token)
+        .collect()
 }
 
 pub fn format_title(repo: Option<&str>, agent: &str) -> String {
@@ -64,15 +129,36 @@ pub fn run_scoped_fingerprint(started_at: Option<u64>, fingerprint: &str) -> Str
     }
 }
 
+/// Returns true if a notification of `kind` has already fired for the
+/// current `run_id` on this pane. Use to dedupe events that share a kind
+/// but use distinct fingerprints (e.g. `Stop` vs explicit `TaskCompleted`
+/// in the same run).
+pub fn has_run_scoped_stamp(
+    pane_id: &str,
+    kind: DesktopNotificationKind,
+    run_id: Option<u64>,
+) -> bool {
+    let Some(run_id) = run_id else { return false };
+    if pane_id.is_empty() {
+        return false;
+    }
+    let raw = tmux::get_pane_option_value(pane_id, stamp_option_key(kind));
+    let Some(stamp) = parse_stamp(&raw) else {
+        return false;
+    };
+    stamp.fingerprint.starts_with(&format!("{run_id}:"))
+}
+
 pub fn notify_if_allowed(
     settings: &DesktopNotificationSettings,
     pane_id: &str,
     kind: DesktopNotificationKind,
+    event: DesktopNotificationEvent,
     fingerprint: &str,
     title: &str,
     body: &str,
 ) -> bool {
-    if !settings.enabled || pane_id.is_empty() {
+    if !settings.enabled || pane_id.is_empty() || !settings.event_enabled(event) {
         return false;
     }
 
@@ -323,5 +409,127 @@ mod tests {
             normalize_fingerprint("foo|bar\nbaz\rqux"),
             "foo bar baz qux"
         );
+    }
+
+    #[test]
+    fn events_default_to_all_when_unset() {
+        let opts = HashMap::new();
+        let settings = DesktopNotificationSettings::from_tmux_options_with_backend(&opts, true);
+        for event in DesktopNotificationEvent::ALL {
+            assert!(settings.event_enabled(event), "expected {event:?} enabled");
+        }
+    }
+
+    #[test]
+    fn events_parse_explicit_subset() {
+        let mut opts = HashMap::new();
+        opts.insert(
+            "@sidebar_notifications_events".into(),
+            "stop, permission_denied".into(),
+        );
+        let settings = DesktopNotificationSettings::from_tmux_options_with_backend(&opts, true);
+        assert!(settings.event_enabled(DesktopNotificationEvent::Stop));
+        assert!(settings.event_enabled(DesktopNotificationEvent::PermissionDenied));
+        assert!(!settings.event_enabled(DesktopNotificationEvent::Notification));
+        assert!(!settings.event_enabled(DesktopNotificationEvent::TaskCompleted));
+        assert!(!settings.event_enabled(DesktopNotificationEvent::StopFailure));
+    }
+
+    #[test]
+    fn events_all_keyword_enables_every_event() {
+        let mut opts = HashMap::new();
+        opts.insert("@sidebar_notifications_events".into(), "all".into());
+        let settings = DesktopNotificationSettings::from_tmux_options_with_backend(&opts, true);
+        for event in DesktopNotificationEvent::ALL {
+            assert!(settings.event_enabled(event));
+        }
+    }
+
+    #[test]
+    fn events_empty_value_disables_every_event() {
+        let mut opts = HashMap::new();
+        opts.insert("@sidebar_notifications_events".into(), "".into());
+        let settings = DesktopNotificationSettings::from_tmux_options_with_backend(&opts, true);
+        for event in DesktopNotificationEvent::ALL {
+            assert!(!settings.event_enabled(event));
+        }
+    }
+
+    #[test]
+    fn events_unknown_tokens_are_ignored() {
+        let mut opts = HashMap::new();
+        opts.insert(
+            "@sidebar_notifications_events".into(),
+            "stop,bogus, task_completed".into(),
+        );
+        let settings = DesktopNotificationSettings::from_tmux_options_with_backend(&opts, true);
+        assert!(settings.event_enabled(DesktopNotificationEvent::Stop));
+        assert!(settings.event_enabled(DesktopNotificationEvent::TaskCompleted));
+        assert!(!settings.event_enabled(DesktopNotificationEvent::Notification));
+    }
+
+    #[test]
+    fn has_run_scoped_stamp_returns_false_without_stamp() {
+        let _guard = tmux::test_mock::install();
+        let pane = "%PANE_NO_STAMP";
+        assert!(!has_run_scoped_stamp(
+            pane,
+            DesktopNotificationKind::TaskCompleted,
+            Some(1_700_000_000_000),
+        ));
+    }
+
+    #[test]
+    fn has_run_scoped_stamp_matches_current_run() {
+        let _guard = tmux::test_mock::install();
+        let pane = "%PANE_CURRENT_RUN";
+        let run_id = 1_700_000_000_000_u64;
+        let stamp = encode_stamp(42, &format!("{run_id}:task-xyz"));
+        tmux::test_mock::set(
+            pane,
+            stamp_option_key(DesktopNotificationKind::TaskCompleted),
+            &stamp,
+        );
+        assert!(has_run_scoped_stamp(
+            pane,
+            DesktopNotificationKind::TaskCompleted,
+            Some(run_id),
+        ));
+    }
+
+    #[test]
+    fn has_run_scoped_stamp_rejects_stale_run() {
+        let _guard = tmux::test_mock::install();
+        let pane = "%PANE_STALE_RUN";
+        let old_run = 1_600_000_000_000_u64;
+        let new_run = 1_700_000_000_000_u64;
+        let stamp = encode_stamp(42, &format!("{old_run}:task-xyz"));
+        tmux::test_mock::set(
+            pane,
+            stamp_option_key(DesktopNotificationKind::TaskCompleted),
+            &stamp,
+        );
+        assert!(!has_run_scoped_stamp(
+            pane,
+            DesktopNotificationKind::TaskCompleted,
+            Some(new_run),
+        ));
+    }
+
+    #[test]
+    fn has_run_scoped_stamp_requires_run_id() {
+        let _guard = tmux::test_mock::install();
+        let pane = "%PANE_NO_RUN_ID";
+        let stamp = encode_stamp(42, "1700000000000:task-xyz");
+        tmux::test_mock::set(
+            pane,
+            stamp_option_key(DesktopNotificationKind::TaskCompleted),
+            &stamp,
+        );
+        assert!(!has_run_scoped_stamp(
+            pane,
+            DesktopNotificationKind::TaskCompleted,
+            None,
+        ));
     }
 }

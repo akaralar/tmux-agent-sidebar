@@ -221,7 +221,7 @@ Branches are force-deleted because the sidebar auto-generates them under the `ag
 | Git branch display | :white_check_mark: | :white_check_mark: | Uses the pane `cwd`; Claude updates dynamically via `CwdChanged` |
 | Elapsed time | :white_check_mark: | :white_check_mark: | Since the last prompt |
 | Task progress | :white_check_mark: | :x: | Requires `PostToolUse`; Codex fires `PostToolUse` only for `Bash`, so task progress from tools is unavailable |
-| Task lifecycle notifications | :white_check_mark: | :x: | Claude only. Codex only emits `Stop`, so it does not produce task-completed notifications |
+| Task lifecycle notifications | :white_check_mark: | :white_check_mark: (`Stop` only) | `Stop` desktop notifications fire for both. `Notification`, `TaskCompleted`, `StopFailure`, and `PermissionDenied` are Claude-only because Codex does not emit those hooks |
 | Subagent display | :white_check_mark: | :x: | Requires `SubagentStart` / `SubagentStop` |
 | Activity log | :white_check_mark: | :white_check_mark: (Bash only) | Codex's `PostToolUse` fires only for `Bash` tool calls; `Read`/`Edit`/`Write`/`Grep`/`Glob`/etc. are not reported |
 | Worktree lifecycle tracking | :white_check_mark: | :x: | Requires `WorktreeCreate` / `WorktreeRemove` |
@@ -230,7 +230,7 @@ Branches are force-deleted because the sidebar auto-generates them under the `ag
 
 - **Waiting status (Claude Code)** — After you approve a permission prompt, the status stays `waiting` until the next hook event fires. This is a limitation of the Claude Code hook system.
 - **Codex hook coverage** — Codex emits `SessionStart`, `UserPromptSubmit`, `Stop`, and `PostToolUse`. `PostToolUse` is limited to the `Bash` tool (Codex's schema types `tool_input` as `{ command: string }`), so the Codex activity log shows only Bash commands. Waiting status, task progress, subagent display, and worktree tracking remain unavailable.
-- **Desktop notifications** — macOS requires `osascript`; Linux requires `notify-send`. If those commands are missing, notifications stay silent even when `@sidebar_notifications` is enabled. Notifications currently cover Claude task lifecycle and permission events only.
+- **Desktop notifications** — macOS requires `osascript`; Linux requires `notify-send`. If those commands are missing, notifications stay silent even when `@sidebar_notifications` is enabled. `Stop` notifications fire for both Claude Code and Codex; `Notification`, `TaskCompleted`, `StopFailure`, and `PermissionDenied` fire only for Claude Code (Codex does not emit those hooks).
 
 ## Customization
 
@@ -244,6 +244,7 @@ set -g @sidebar_width 32                 # width in columns or % (default: 15%)
 set -g @sidebar_bottom_height 20         # bottom panel height in lines (default: 20, 0 to hide)
 set -g @sidebar_auto_create off          # disable auto-create on new windows (default: on)
 set -g @sidebar_notifications off        # desktop notifications for task completion/failure and permission prompts (default: on)
+set -g @sidebar_notifications_events "stop,notification" # limit desktop notifications to selected hook events (default: all)
 
 # Spawn worktree modal defaults (optional)
 set -g @agent-sidebar-default-agent codex  # agent launched by `n` (default: claude)
@@ -302,9 +303,20 @@ set -g @sidebar_notifications on
 
 Supported events:
 
-- `TaskCompleted`
-- `StopFailure`
-- `PermissionDenied`
+- `stop` — assistant finished responding (`Stop` hook; Claude Code and Codex)
+- `notification` — permission prompt or other attention request (`Notification` hook; Claude only)
+- `task_completed` — subagent / Task tool completion (`TaskCompleted` hook; Claude only)
+- `stop_failure` — assistant ended with an error (`StopFailure` hook; Claude only)
+- `permission_denied` — permission explicitly denied (`PermissionDenied` hook; Claude only)
+
+Restrict which events fire notifications with `@sidebar_notifications_events` (comma-separated event names; `all` or unset = every event):
+
+```tmux
+set -g @sidebar_notifications_events "stop,notification"  # drop subagent + error notifications
+set -g @sidebar_notifications_events all                  # explicit "fire everything" (default)
+```
+
+Setting an empty value disables every event without touching the master `@sidebar_notifications` switch.
 
 Delivery depends on the platform:
 

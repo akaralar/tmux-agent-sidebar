@@ -321,18 +321,22 @@ fn handle_event(pane: &str, agent_name: &str, event: AgentEvent) -> i32 {
             worktree,
             session_id,
             ..
-        } => on_notification(
-            pane,
-            &AgentContext {
-                agent: &agent,
-                cwd: &cwd,
-                permission_mode: &permission_mode,
-                worktree: &worktree,
-                session_id: &session_id,
-            },
-            &wait_reason,
-            meta_only,
-        ),
+        } => {
+            let notifications = notification_settings();
+            on_notification(
+                pane,
+                &AgentContext {
+                    agent: &agent,
+                    cwd: &cwd,
+                    permission_mode: &permission_mode,
+                    worktree: &worktree,
+                    session_id: &session_id,
+                },
+                &wait_reason,
+                meta_only,
+                &notifications,
+            )
+        }
         AgentEvent::Stop {
             agent,
             cwd,
@@ -342,18 +346,22 @@ fn handle_event(pane: &str, agent_name: &str, event: AgentEvent) -> i32 {
             worktree,
             session_id,
             ..
-        } => on_stop(
-            pane,
-            &AgentContext {
-                agent: &agent,
-                cwd: &cwd,
-                permission_mode: &permission_mode,
-                worktree: &worktree,
-                session_id: &session_id,
-            },
-            &last_message,
-            response.as_deref(),
-        ),
+        } => {
+            let notifications = notification_settings();
+            on_stop(
+                pane,
+                &AgentContext {
+                    agent: &agent,
+                    cwd: &cwd,
+                    permission_mode: &permission_mode,
+                    worktree: &worktree,
+                    session_id: &session_id,
+                },
+                &last_message,
+                response.as_deref(),
+                &notifications,
+            )
+        }
         AgentEvent::StopFailure {
             agent,
             cwd,
@@ -493,7 +501,13 @@ fn on_user_prompt_submit(pane: &str, ctx: &AgentContext<'_>, prompt: &str) -> i3
     0
 }
 
-fn on_notification(pane: &str, ctx: &AgentContext<'_>, wait_reason: &str, meta_only: bool) -> i32 {
+fn on_notification(
+    pane: &str,
+    ctx: &AgentContext<'_>,
+    wait_reason: &str,
+    meta_only: bool,
+    notifications: &desktop_notification::DesktopNotificationSettings,
+) -> i32 {
     set_agent_meta(pane, ctx);
     if meta_only {
         return 0;
@@ -503,10 +517,30 @@ fn on_notification(pane: &str, ctx: &AgentContext<'_>, wait_reason: &str, meta_o
     if !wait_reason.is_empty() {
         tmux::set_pane_option(pane, "@pane_wait_reason", wait_reason);
     }
+    let repo = repo_label_from_ctx(ctx);
+    let fingerprint = desktop_notification::run_scoped_fingerprint(
+        notification_run_id(pane),
+        notification_fingerprint(wait_reason),
+    );
+    let _ = notify_desktop(
+        pane,
+        DesktopNotificationKind::PermissionRequired,
+        desktop_notification::DesktopNotificationEvent::Notification,
+        notifications,
+        &fingerprint,
+        &desktop_notification::format_title(repo.as_deref(), ctx.agent),
+        &notification_body(wait_reason),
+    );
     0
 }
 
-fn on_stop(pane: &str, ctx: &AgentContext<'_>, last_message: &str, response: Option<&str>) -> i32 {
+fn on_stop(
+    pane: &str,
+    ctx: &AgentContext<'_>,
+    last_message: &str,
+    response: Option<&str>,
+    notifications: &desktop_notification::DesktopNotificationSettings,
+) -> i32 {
     set_agent_meta(pane, ctx);
     set_attention(pane, "clear");
     if !last_message.is_empty() {
@@ -517,6 +551,29 @@ fn on_stop(pane: &str, ctx: &AgentContext<'_>, last_message: &str, response: Opt
     clear_run_state(pane);
     mark_task_reset(pane);
     set_status(pane, "idle");
+    let run_id = notification_run_id(pane);
+    // Skip the generic Stop notification if an explicit TaskCompleted
+    // stamp from the current run has already fired — otherwise Claude
+    // Code's `TaskCompleted` → `Stop` sequence produces two desktop
+    // notifications for the same logical completion.
+    let already_notified = desktop_notification::has_run_scoped_stamp(
+        pane,
+        DesktopNotificationKind::TaskCompleted,
+        run_id,
+    );
+    if !already_notified {
+        let repo = repo_label_from_ctx(ctx);
+        let fingerprint = desktop_notification::run_scoped_fingerprint(run_id, "stop");
+        let _ = notify_desktop(
+            pane,
+            DesktopNotificationKind::TaskCompleted,
+            desktop_notification::DesktopNotificationEvent::Stop,
+            notifications,
+            &fingerprint,
+            &desktop_notification::format_title(repo.as_deref(), ctx.agent),
+            &task_completed_body(""),
+        );
+    }
     if let Some(resp) = response {
         println!("{resp}");
     }
@@ -546,6 +603,7 @@ fn on_stop_failure(
     let _ = notify_desktop(
         pane,
         DesktopNotificationKind::TaskFailed,
+        desktop_notification::DesktopNotificationEvent::StopFailure,
         notifications,
         &fingerprint,
         &desktop_notification::format_title(repo.as_deref(), ctx.agent),
@@ -622,6 +680,7 @@ fn on_permission_denied(
     let _ = notify_desktop(
         pane,
         DesktopNotificationKind::PermissionRequired,
+        desktop_notification::DesktopNotificationEvent::PermissionDenied,
         &notifications,
         &fingerprint,
         &desktop_notification::format_title(repo.as_deref(), ctx.agent),
@@ -668,6 +727,7 @@ fn on_task_completed(
     let _ = notify_desktop(
         pane,
         DesktopNotificationKind::TaskCompleted,
+        desktop_notification::DesktopNotificationEvent::TaskCompleted,
         notifications,
         &fingerprint,
         &desktop_notification::format_title(repo.as_deref(), agent_name),
@@ -679,12 +739,13 @@ fn on_task_completed(
 fn notify_desktop(
     pane: &str,
     kind: DesktopNotificationKind,
+    event: desktop_notification::DesktopNotificationEvent,
     settings: &desktop_notification::DesktopNotificationSettings,
     fingerprint: &str,
     title: &str,
     body: &str,
 ) -> bool {
-    desktop_notification::notify_if_allowed(settings, pane, kind, fingerprint, title, body)
+    desktop_notification::notify_if_allowed(settings, pane, kind, event, fingerprint, title, body)
 }
 
 fn notification_settings() -> desktop_notification::DesktopNotificationSettings {
@@ -720,6 +781,22 @@ fn task_completed_body(task_subject: &str) -> String {
         "Task completed".to_string()
     } else {
         format!("Task completed: {task_subject}")
+    }
+}
+
+fn notification_fingerprint(wait_reason: &str) -> &str {
+    if wait_reason.is_empty() {
+        "notification"
+    } else {
+        wait_reason
+    }
+}
+
+fn notification_body(wait_reason: &str) -> String {
+    if wait_reason.is_empty() {
+        "Permission required".to_string()
+    } else {
+        wait_reason.to_string()
     }
 }
 
