@@ -115,10 +115,13 @@ fn parse_events(raw: &str) -> HashSet<DesktopNotificationEvent> {
         .collect()
 }
 
-pub fn format_title(repo: Option<&str>, agent: &str) -> String {
-    match repo.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(repo) => format!("{repo} / {agent}"),
-        None => agent.to_string(),
+pub fn format_title(repo: Option<&str>, branch: Option<&str>, agent: &str) -> String {
+    let repo = repo.map(str::trim).filter(|s| !s.is_empty());
+    let branch = branch.map(str::trim).filter(|s| !s.is_empty());
+    match (repo, branch) {
+        (Some(repo), Some(branch)) => format!("{repo} ({branch}) / {agent}"),
+        (Some(repo), None) => format!("{repo} / {agent}"),
+        _ => agent.to_string(),
     }
 }
 
@@ -393,6 +396,21 @@ mod tests {
         let opts = HashMap::new();
         let settings = DesktopNotificationSettings::from_tmux_options_with_backend(&opts, false);
         assert!(!settings.enabled);
+    }
+
+    #[test]
+    fn format_title_variants() {
+        assert_eq!(
+            format_title(Some("repo"), Some("feat/xyz"), "claude"),
+            "repo (feat/xyz) / claude"
+        );
+        assert_eq!(format_title(Some("repo"), None, "claude"), "repo / claude");
+        assert_eq!(
+            format_title(Some("repo"), Some(""), "claude"),
+            "repo / claude"
+        );
+        assert_eq!(format_title(None, Some("feat"), "claude"), "claude");
+        assert_eq!(format_title(None, None, "claude"), "claude");
     }
 
     #[test]

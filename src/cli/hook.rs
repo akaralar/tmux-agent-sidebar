@@ -518,6 +518,7 @@ fn on_notification(
         tmux::set_pane_option(pane, "@pane_wait_reason", wait_reason);
     }
     let repo = repo_label_from_ctx(ctx);
+    let branch = branch_label_from_ctx(ctx);
     let fingerprint = desktop_notification::run_scoped_fingerprint(
         notification_run_id(pane),
         notification_fingerprint(wait_reason),
@@ -528,7 +529,7 @@ fn on_notification(
         desktop_notification::DesktopNotificationEvent::Notification,
         notifications,
         &fingerprint,
-        &desktop_notification::format_title(repo.as_deref(), ctx.agent),
+        &desktop_notification::format_title(repo.as_deref(), branch.as_deref(), ctx.agent),
         &notification_body(wait_reason),
     );
     0
@@ -563,6 +564,7 @@ fn on_stop(
     );
     if !already_notified {
         let repo = repo_label_from_ctx(ctx);
+        let branch = branch_label_from_ctx(ctx);
         let fingerprint = desktop_notification::run_scoped_fingerprint(run_id, "stop");
         let _ = notify_desktop(
             pane,
@@ -570,8 +572,8 @@ fn on_stop(
             desktop_notification::DesktopNotificationEvent::Stop,
             notifications,
             &fingerprint,
-            &desktop_notification::format_title(repo.as_deref(), ctx.agent),
-            &task_completed_body(""),
+            &desktop_notification::format_title(repo.as_deref(), branch.as_deref(), ctx.agent),
+            &stop_body(last_message),
         );
     }
     if let Some(resp) = response {
@@ -599,6 +601,7 @@ fn on_stop_failure(
         stop_failure_fingerprint(error),
     );
     let repo = repo_label_from_ctx(ctx);
+    let branch = branch_label_from_ctx(ctx);
     let body = stop_failure_body(error);
     let _ = notify_desktop(
         pane,
@@ -606,7 +609,7 @@ fn on_stop_failure(
         desktop_notification::DesktopNotificationEvent::StopFailure,
         notifications,
         &fingerprint,
-        &desktop_notification::format_title(repo.as_deref(), ctx.agent),
+        &desktop_notification::format_title(repo.as_deref(), branch.as_deref(), ctx.agent),
         &body,
     );
     0
@@ -673,6 +676,7 @@ fn on_permission_denied(
     set_attention(pane, "notification");
     tmux::set_pane_option(pane, "@pane_wait_reason", "permission_denied");
     let repo = repo_label_from_ctx(ctx);
+    let branch = branch_label_from_ctx(ctx);
     let fingerprint = desktop_notification::run_scoped_fingerprint(
         notification_run_id(pane),
         "permission_denied",
@@ -683,7 +687,7 @@ fn on_permission_denied(
         desktop_notification::DesktopNotificationEvent::PermissionDenied,
         &notifications,
         &fingerprint,
-        &desktop_notification::format_title(repo.as_deref(), ctx.agent),
+        &desktop_notification::format_title(repo.as_deref(), branch.as_deref(), ctx.agent),
         "Permission required",
     );
     0
@@ -723,6 +727,7 @@ fn on_task_completed(
         task_completed_fingerprint(task_id, task_subject),
     );
     let repo = repo_label_from_pane(pane);
+    let branch = branch_label_from_pane(pane);
     let body = task_completed_body(task_subject);
     let _ = notify_desktop(
         pane,
@@ -730,7 +735,7 @@ fn on_task_completed(
         desktop_notification::DesktopNotificationEvent::TaskCompleted,
         notifications,
         &fingerprint,
-        &desktop_notification::format_title(repo.as_deref(), agent_name),
+        &desktop_notification::format_title(repo.as_deref(), branch.as_deref(), agent_name),
         &body,
     );
     0
@@ -784,6 +789,26 @@ fn task_completed_body(task_subject: &str) -> String {
     }
 }
 
+const NOTIFICATION_BODY_MAX_CHARS: usize = 240;
+
+fn stop_body(last_message: &str) -> String {
+    let trimmed = last_message.trim();
+    if trimmed.is_empty() {
+        "Task completed".to_string()
+    } else {
+        truncate_body(trimmed)
+    }
+}
+
+fn truncate_body(text: &str) -> String {
+    if text.chars().count() <= NOTIFICATION_BODY_MAX_CHARS {
+        text.to_string()
+    } else {
+        let truncated: String = text.chars().take(NOTIFICATION_BODY_MAX_CHARS).collect();
+        format!("{truncated}…")
+    }
+}
+
 fn notification_fingerprint(wait_reason: &str) -> &str {
     if wait_reason.is_empty() {
         "notification"
@@ -831,6 +856,35 @@ fn repo_label_from_pane(pane: &str) -> Option<String> {
         return Some(worktree);
     }
     None
+}
+
+fn branch_label_from_ctx(ctx: &AgentContext<'_>) -> Option<String> {
+    if let Some(wt) = ctx.worktree
+        && !wt.branch.is_empty()
+    {
+        return Some(wt.branch.clone());
+    }
+    let cwd = resolve_cwd(ctx.cwd, ctx.worktree);
+    current_branch(cwd)
+}
+
+fn branch_label_from_pane(pane: &str) -> Option<String> {
+    let wt_branch = tmux::get_pane_option_value(pane, "@pane_worktree_branch");
+    if !wt_branch.is_empty() {
+        return Some(wt_branch);
+    }
+    let cwd = tmux::get_pane_option_value(pane, "@pane_cwd");
+    if cwd.is_empty() {
+        None
+    } else {
+        current_branch(&cwd)
+    }
+}
+
+fn current_branch(path: &str) -> Option<String> {
+    crate::git::run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s != "HEAD")
 }
 
 fn repo_label_from_path(path: &str) -> Option<String> {
@@ -981,6 +1035,56 @@ mod tests {
         assert_eq!(stop_failure_fingerprint(""), "task-failed");
         assert_eq!(stop_failure_body("boom"), "Task failed: boom");
         assert_eq!(stop_failure_body(""), "Task failed");
+    }
+
+    #[test]
+    fn stop_body_falls_back_to_placeholder_when_empty() {
+        assert_eq!(stop_body(""), "Task completed");
+        assert_eq!(stop_body("   \n"), "Task completed");
+    }
+
+    #[test]
+    fn stop_body_uses_last_message_when_present() {
+        assert_eq!(
+            stop_body("Fixed the bug in main.rs"),
+            "Fixed the bug in main.rs"
+        );
+    }
+
+    #[test]
+    fn stop_body_truncates_long_message() {
+        let long = "a".repeat(NOTIFICATION_BODY_MAX_CHARS + 50);
+        let body = stop_body(&long);
+        assert_eq!(body.chars().count(), NOTIFICATION_BODY_MAX_CHARS + 1);
+        assert!(body.ends_with('…'));
+    }
+
+    #[test]
+    fn branch_label_from_ctx_prefers_worktree_branch() {
+        let wt = Some(WorktreeInfo {
+            name: "feat".into(),
+            path: "/tmp/wt".into(),
+            branch: "feature/xyz".into(),
+            original_repo_dir: "/home/user/repo".into(),
+        });
+        let session_id = None;
+        let ctx = AgentContext {
+            agent: "claude",
+            cwd: "/tmp/wt/src",
+            permission_mode: "default",
+            worktree: &wt,
+            session_id: &session_id,
+        };
+        assert_eq!(branch_label_from_ctx(&ctx), Some("feature/xyz".into()));
+    }
+
+    #[test]
+    fn branch_label_from_pane_prefers_worktree_branch_option() {
+        let _guard = tmux::test_mock::install();
+        let pane = "%PANE_BRANCH";
+        tmux::test_mock::set(pane, "@pane_worktree_branch", "feat/abc");
+        tmux::test_mock::set(pane, "@pane_cwd", "/tmp/somewhere");
+        assert_eq!(branch_label_from_pane(pane), Some("feat/abc".into()));
     }
 
     #[test]
