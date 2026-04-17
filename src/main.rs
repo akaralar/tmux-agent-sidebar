@@ -101,11 +101,7 @@ fn run_app(
     state.refresh();
     let mut window_inactive_count: u32 = 0;
 
-    if let Some(ref pane_id) = state.focused_pane_id
-        && let Some(path) = tmux::get_pane_path(pane_id)
-    {
-        state.apply_git_data(git::fetch_git_data(&path));
-    }
+    refresh_git_for_focused_pane(&mut state);
 
     // Resolve the installed Claude Code plugin version once at startup,
     // matching the version_notice pattern. Restart the sidebar after a
@@ -343,7 +339,11 @@ fn run_app(
 
         let sigusr1 = NEEDS_REFRESH.swap(false, Ordering::Relaxed);
         if sigusr1 || last_refresh.elapsed() >= refresh_interval {
+            let previous_focused_pane_id = state.focused_pane_id.clone();
             let is_window_active = state.refresh();
+            if state.focused_pane_id != previous_focused_pane_id {
+                refresh_git_for_focused_pane(&mut state);
+            }
             if is_window_active {
                 if window_inactive_count >= 2 {
                     state.global.load_from_tmux();
@@ -368,6 +368,32 @@ fn run_app(
         if let Ok(notice) = version_rx.try_recv() {
             state.version_notice = Some(notice);
         }
+    }
+}
+
+fn refresh_git_for_focused_pane(state: &mut AppState) {
+    refresh_git_for_focused_pane_with(
+        state.focused_pane_id.clone(),
+        tmux::get_pane_path,
+        git::fetch_git_data,
+        |data| state.apply_git_data(data),
+    );
+}
+
+fn refresh_git_for_focused_pane_with<FGetPath, FFetchGit, FApply>(
+    focused_pane_id: Option<String>,
+    get_pane_path: FGetPath,
+    mut fetch_git_data: FFetchGit,
+    mut apply_git_data: FApply,
+) where
+    FGetPath: Fn(&str) -> Option<String>,
+    FFetchGit: FnMut(&str) -> GitData,
+    FApply: FnMut(GitData),
+{
+    if let Some(pane_id) = focused_pane_id
+        && let Some(path) = get_pane_path(&pane_id)
+    {
+        apply_git_data(fetch_git_data(&path));
     }
 }
 
@@ -513,5 +539,49 @@ mod tests {
 
         // Verify the flag check pattern used in git_poll_loop
         assert!(active.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_refresh_git_for_focused_pane_with_fetches_and_applies_git_data() {
+        let mut fetched_path = None;
+        let mut applied = None;
+
+        refresh_git_for_focused_pane_with(
+            Some("%1".into()),
+            |pane_id| {
+                assert_eq!(pane_id, "%1");
+                Some("/tmp/project".into())
+            },
+            |path| {
+                fetched_path = Some(path.to_string());
+                GitData {
+                    branch: "main".into(),
+                    ..GitData::default()
+                }
+            },
+            |data| applied = Some(data),
+        );
+
+        assert_eq!(fetched_path.as_deref(), Some("/tmp/project"));
+        assert_eq!(applied.map(|data| data.branch), Some("main".into()));
+    }
+
+    #[test]
+    fn test_refresh_git_for_focused_pane_with_skips_when_no_path() {
+        let mut fetch_called = false;
+        let mut applied = false;
+
+        refresh_git_for_focused_pane_with(
+            Some("%1".into()),
+            |_pane_id| None,
+            |_path| {
+                fetch_called = true;
+                GitData::default()
+            },
+            |_data| applied = true,
+        );
+
+        assert!(!fetch_called);
+        assert!(!applied);
     }
 }

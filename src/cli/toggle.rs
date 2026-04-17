@@ -156,8 +156,13 @@ pub(crate) fn cmd_toggle_all(_args: &[String]) -> i32 {
             }
         }
     } else {
-        let all_windows = tmux::run_tmux(&["list-panes", "-a", "-F", "#{window_id}|#{pane_current_path}"])
-            .unwrap_or_default();
+        let all_windows = tmux::run_tmux(&[
+            "list-panes",
+            "-a",
+            "-F",
+            "#{window_id}|#{pane_current_path}",
+        ])
+        .unwrap_or_default();
         for (window_id, pane_path) in unique_window_paths(&all_windows) {
             let args = vec!["--create-only".to_string(), window_id, pane_path];
             cmd_toggle(&args);
@@ -221,7 +226,10 @@ mod tests {
     #[test]
     fn unique_window_paths_skips_malformed_lines() {
         let output = "bad-line\n%1|/tmp";
-        assert_eq!(unique_window_paths(output), vec![("%1".to_string(), "/tmp".to_string())]);
+        assert_eq!(
+            unique_window_paths(output),
+            vec![("%1".to_string(), "/tmp".to_string())]
+        );
     }
 }
 
