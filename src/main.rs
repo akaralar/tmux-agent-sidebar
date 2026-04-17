@@ -225,7 +225,7 @@ fn run_app(
                             }
                             Focus::Panes => {
                                 if state.move_pane_selection(1) {
-                                    state.global.save_cursor();
+                                    state.global.queue_cursor_save();
                                 } else {
                                     state.focus = Focus::ActivityLog;
                                 }
@@ -236,7 +236,7 @@ fn run_app(
                             Focus::Filter => {}
                             Focus::Panes => {
                                 if state.move_pane_selection(-1) {
-                                    state.global.save_cursor();
+                                    state.global.queue_cursor_save();
                                 } else {
                                     state.focus = Focus::Filter;
                                 }
@@ -368,6 +368,10 @@ fn run_app(
         if let Ok(notice) = version_rx.try_recv() {
             state.version_notice = Some(notice);
         }
+
+        state
+            .global
+            .flush_pending_cursor_save(std::time::Duration::from_millis(120));
     }
 }
 

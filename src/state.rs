@@ -294,6 +294,8 @@ pub struct GlobalState {
     last_saved_cursor: usize,
     /// Last repo filter value successfully written to tmux.
     last_saved_repo_filter: RepoFilter,
+    /// When the selected cursor was last changed and still needs persisting.
+    pending_cursor_save_since: Option<Instant>,
 }
 
 impl Default for GlobalState {
@@ -311,6 +313,7 @@ impl GlobalState {
             last_saved_filter: StatusFilter::All,
             last_saved_cursor: 0,
             last_saved_repo_filter: RepoFilter::All,
+            pending_cursor_save_since: None,
         }
     }
 
@@ -336,6 +339,26 @@ impl GlobalState {
         {
             self.last_saved_cursor = self.selected_pane_row;
         }
+    }
+
+    /// Mark the cursor as dirty so the main loop can persist it once the
+    /// user pauses navigation.
+    pub fn queue_cursor_save(&mut self) {
+        self.pending_cursor_save_since = Some(Instant::now());
+    }
+
+    /// Persist a queued cursor update after it has been idle for at least the
+    /// requested debounce duration. Returns true when the queue was consumed.
+    pub fn flush_pending_cursor_save(&mut self, debounce: std::time::Duration) -> bool {
+        let Some(queued_at) = self.pending_cursor_save_since else {
+            return false;
+        };
+        if queued_at.elapsed() < debounce {
+            return false;
+        }
+        self.pending_cursor_save_since = None;
+        self.save_cursor();
+        true
     }
 
     /// Save repo filter to tmux global variable.
@@ -1217,13 +1240,18 @@ impl AppState {
         }
     }
 
-    pub fn activate_selected_pane(&self) {
-        if let Some(target) = self
+    pub fn activate_selected_pane(&mut self) {
+        if let Some(target_pane_id) = self
             .layout
             .pane_row_targets
             .get(self.global.selected_pane_row)
+            .map(|target| target.pane_id.clone())
         {
-            tmux::select_pane(&target.pane_id);
+            // Update the sidebar immediately so the active marker and
+            // repo header highlight move without waiting for the next
+            // periodic tmux refresh.
+            self.focused_pane_id = Some(target_pane_id.clone());
+            tmux::select_pane(&target_pane_id);
         }
     }
 
@@ -1421,7 +1449,7 @@ impl AppState {
         let line_index = (row as usize - 2) + self.panes_scroll.offset;
         if let Some(Some(agent_row)) = self.layout.line_to_row.get(line_index) {
             self.global.selected_pane_row = *agent_row;
-            self.global.save_cursor();
+            self.global.queue_cursor_save();
             self.activate_selected_pane();
         }
     }
