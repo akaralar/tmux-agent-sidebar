@@ -244,7 +244,7 @@ set -g @sidebar_width 32                 # width in columns or % (default: 15%)
 set -g @sidebar_bottom_height 20         # bottom panel height in lines (default: 20, 0 to hide)
 set -g @sidebar_auto_create off          # disable auto-create on new windows (default: on)
 set -g @sidebar_notifications off        # desktop notifications for task completion/failure and permission prompts (default: on)
-set -g @sidebar_notifications_events "stop,notification" # limit desktop notifications to selected hook events (default: all)
+set -g @sidebar_notifications_events "stop,notification" # limit desktop notifications to selected hook events (default: all except task_completed)
 
 # Spawn worktree modal defaults (optional)
 set -g @agent-sidebar-default-agent codex  # agent launched by `n` (default: claude)
@@ -305,15 +305,16 @@ Supported events:
 
 - `stop` — assistant finished responding (`Stop` hook; Claude Code and Codex)
 - `notification` — permission prompt or other attention request (`Notification` hook; Claude only)
-- `task_completed` — subagent / Task tool completion (`TaskCompleted` hook; Claude only)
+- `task_completed` — subagent / Task tool completion (`TaskCompleted` hook; Claude only). Off by default — opt in via `@sidebar_notifications_events`.
 - `stop_failure` — assistant ended with an error (`StopFailure` hook; Claude only)
 - `permission_denied` — permission explicitly denied (`PermissionDenied` hook; Claude only)
 
-Restrict which events fire notifications with `@sidebar_notifications_events` (comma-separated event names; `all` or unset = every event):
+Restrict which events fire notifications with `@sidebar_notifications_events` (comma-separated event names; `all` fires every event, unset = every event except `task_completed`):
 
 ```tmux
-set -g @sidebar_notifications_events "stop,notification"  # drop subagent + error notifications
-set -g @sidebar_notifications_events all                  # explicit "fire everything" (default)
+set -g @sidebar_notifications_events "stop,notification"                  # drop error notifications
+set -g @sidebar_notifications_events "stop,notification,task_completed"   # enable subagent notifications
+set -g @sidebar_notifications_events all                                  # explicit "fire everything"
 ```
 
 Setting an empty value disables every event without touching the master `@sidebar_notifications` switch.

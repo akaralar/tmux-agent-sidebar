@@ -6,7 +6,7 @@ use tmux_agent_sidebar::activity::{ActivityEntry, TaskProgress, TaskStatus};
 use tmux_agent_sidebar::group::{PaneGitInfo, RepoGroup};
 use tmux_agent_sidebar::state::{Focus, PopupState, StatusFilter};
 use tmux_agent_sidebar::tmux::{
-    AgentType, PaneInfo, PaneStatus, PermissionMode, SessionInfo, WindowInfo,
+    AgentType, PaneInfo, PaneStatus, PermissionMode, SessionInfo, WindowInfo, WorktreeMetadata,
 };
 
 // ─── UI Snapshot Tests ─────────────────────────────────────────────
@@ -242,8 +242,7 @@ fn snapshot_two_agents_same_window_ui() {
         permission_mode: tmux_agent_sidebar::tmux::PermissionMode::Default,
         subagents: vec![],
         pane_pid: None,
-        worktree_name: String::new(),
-        worktree_branch: String::new(),
+        worktree: WorktreeMetadata::default(),
         session_id: None,
         session_name: String::new(),
         sidebar_spawned: false,
@@ -263,8 +262,7 @@ fn snapshot_two_agents_same_window_ui() {
         permission_mode: tmux_agent_sidebar::tmux::PermissionMode::Default,
         subagents: vec![],
         pane_pid: None,
-        worktree_name: String::new(),
-        worktree_branch: String::new(),
+        worktree: WorktreeMetadata::default(),
         session_id: None,
         session_name: String::new(),
         sidebar_spawned: false,
@@ -466,7 +464,7 @@ fn snapshot_activity_log_ui() {
     state.repo_groups = vec![make_repo_group("project", vec![pane])];
     state.rebuild_row_targets();
 
-    state.activity_entries = vec![
+    state.activity.entries = vec![
         ActivityEntry {
             timestamp: "10:32".into(),
             tool: "Edit".into(),
@@ -517,7 +515,7 @@ fn snapshot_activity_log_long_label_ui() {
     state.repo_groups = vec![make_repo_group("project", vec![pane])];
     state.rebuild_row_targets();
 
-    state.activity_entries = vec![ActivityEntry {
+    state.activity.entries = vec![ActivityEntry {
         timestamp: "10:32".into(),
         tool: "Read".into(),
         label: "config/tmux-agent-sidebar-rs/src/very-long-filename.rs".into(),
@@ -587,7 +585,7 @@ fn snapshot_selected_unfocused_ui() {
     }]);
     state.repo_groups = vec![make_repo_group("project", vec![pane])];
     state.rebuild_row_targets();
-    state.sidebar_focused = false;
+    state.focus_state.sidebar_focused = false;
 
     let output = render_to_string(&mut state, 28, 26);
     insta::assert_snapshot!(output, @"
@@ -942,7 +940,7 @@ fn snapshot_three_groups_middle_focused_ui() {
     let mut group3 = make_repo_group("repo-c", vec![pane3]);
     group3.has_focus = false;
     let mut state = make_state_with_groups(vec![group1, group2, group3]);
-    state.focused_pane_id = Some("%2".into());
+    state.focus_state.focused_pane_id = Some("%2".into());
 
     let output = render_to_string(&mut state, 28, 33);
     insta::assert_snapshot!(output, @"
@@ -1195,7 +1193,7 @@ fn snapshot_activity_all_tool_types_ui() {
     let pane = make_pane(AgentType::Claude, PaneStatus::Running);
     let mut state = make_state_with_groups(vec![make_repo_group("project", vec![pane])]);
 
-    state.activity_entries = vec![
+    state.activity.entries = vec![
         ActivityEntry {
             timestamp: "10:07".into(),
             tool: "Agent".into(),
@@ -1264,9 +1262,9 @@ fn snapshot_activity_all_tool_types_ui() {
 fn snapshot_focus_activity_log_ui() {
     let pane = make_pane(AgentType::Claude, PaneStatus::Running);
     let mut state = make_state_with_groups(vec![make_repo_group("project", vec![pane])]);
-    state.focus = Focus::ActivityLog;
-    state.sidebar_focused = true;
-    state.activity_entries = vec![ActivityEntry {
+    state.focus_state.focus = Focus::ActivityLog;
+    state.focus_state.sidebar_focused = true;
+    state.activity.entries = vec![ActivityEntry {
         timestamp: "10:00".into(),
         tool: "Read".into(),
         label: "file.rs".into(),
@@ -1618,7 +1616,7 @@ fn snapshot_filter_bar_stays_fixed_on_scroll() {
         })
         .collect();
     let mut state = make_state_with_groups(vec![make_repo_group("project", panes)]);
-    state.panes_scroll.offset = 3; // scroll down
+    state.scrolls.panes.offset = 3; // scroll down
 
     let output = render_to_string(&mut state, 30, 15);
     insta::assert_snapshot!(output, @"
