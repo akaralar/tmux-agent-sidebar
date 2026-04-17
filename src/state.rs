@@ -136,6 +136,10 @@ pub struct PaneRuntimeState {
     /// automatically by `prune_pane_states_to_current_panes` when the
     /// pane disappears, so a relaunched pane starts fresh.
     pub tab_pref: Option<BottomTab>,
+    /// Last observed mtime of this pane's `/tmp/tmux-agent-activity*.log`.
+    /// Used by `refresh_task_progress` to skip the (potentially expensive)
+    /// re-parse when the log has not been touched since the previous tick.
+    pub task_progress_log_mtime: Option<std::time::SystemTime>,
 }
 
 #[derive(Debug, Clone)]
@@ -561,6 +565,17 @@ pub struct AppState {
     /// Maps session_id → session name, refreshed periodically from
     /// `~/.claude/sessions/*.json` files.
     pub session_names: HashMap<String, String>,
+    /// `true` when `session_names` has changed since the last
+    /// `refresh_session_names` application. Set by the main loop after
+    /// receiving a fresh map from `session_poll_loop`, cleared by
+    /// `refresh_session_names` once the map has been propagated to every
+    /// pane. Avoids re-walking every pane each tick when the map is
+    /// unchanged (the polling thread only updates it every 10s).
+    pub session_names_dirty: bool,
+    /// `(focused_pane_id, mtime)` of the activity log most recently
+    /// rendered into `activity_entries`. `refresh_activity_log` skips
+    /// re-reading the log when neither field has changed.
+    pub activity_log_cache: Option<(String, std::time::SystemTime)>,
 }
 
 /// Screen-positioned hyperlink overlay for OSC 8 terminal hyperlinks.
@@ -641,6 +656,8 @@ impl AppState {
             global: GlobalState::new(),
             bottom_panel_height: crate::ui::BOTTOM_PANEL_HEIGHT,
             session_names: HashMap::new(),
+            session_names_dirty: true,
+            activity_log_cache: None,
         }
     }
 
@@ -2194,8 +2211,11 @@ mod tests {
         assert_eq!(state.pane_task_dismissed_total(&pane_id), Some(1));
 
         // Pane removed — both dismissed and inactive_since should be cleaned up
+        // by `prune_pane_states_to_current_panes`, which `refresh()` runs via
+        // `apply_session_snapshot` immediately before `refresh_task_progress`.
         state.repo_groups.clear();
         state.set_pane_inactive_since(&pane_id, Some(100));
+        state.prune_pane_states_to_current_panes();
         state.refresh_task_progress();
 
         assert!(state.pane_state(&pane_id).is_none());

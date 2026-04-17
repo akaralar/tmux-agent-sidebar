@@ -122,6 +122,7 @@ fn run_app(
     // `/rename`-assigned labels show up without waiting for the first
     // background scan tick.
     state.session_names = session::scan_session_names();
+    state.session_names_dirty = true;
     state.refresh();
 
     let (git_tx, git_rx) = mpsc::channel::<GitData>();
@@ -147,9 +148,13 @@ fn run_app(
     let mut last_spinner = std::time::Instant::now();
     let refresh_interval = Duration::from_secs(1);
     let spinner_interval = Duration::from_millis(200);
+    let mut needs_redraw = true;
 
     loop {
-        render_frame(terminal, &mut state)?;
+        if needs_redraw {
+            render_frame(terminal, &mut state)?;
+            needs_redraw = false;
+        }
 
         let refresh_timeout = refresh_interval.saturating_sub(last_refresh.elapsed());
         let spinner_timeout = spinner_interval.saturating_sub(last_spinner.elapsed());
@@ -160,7 +165,6 @@ fn run_app(
                 .min(spinner_timeout)
                 .min(Duration::from_millis(16))
         };
-        let mut needs_redraw = false;
         if event::poll(timeout)? {
             loop {
                 let ev = event::read()?;
@@ -345,14 +349,10 @@ fn run_app(
             }
         }
 
-        if needs_redraw {
-            render_frame(terminal, &mut state)?;
-            needs_redraw = false;
-        }
-
         if last_spinner.elapsed() >= spinner_interval {
             state.spinner_frame = (state.spinner_frame + 1) % SPINNER_PULSE.len();
             last_spinner = std::time::Instant::now();
+            needs_redraw = true;
         }
 
         let sigusr1 = NEEDS_REFRESH.swap(false, Ordering::Relaxed);
@@ -378,23 +378,23 @@ fn run_app(
 
         if let Ok(data) = git_rx.try_recv() {
             state.apply_git_data(data);
+            needs_redraw = true;
         }
 
         if let Ok(names) = session_rx.try_recv() {
             state.session_names = names;
+            state.session_names_dirty = true;
+            needs_redraw = true;
         }
 
         if let Ok(notice) = version_rx.try_recv() {
             state.version_notice = Some(notice);
+            needs_redraw = true;
         }
 
         state
             .global
             .flush_pending_cursor_save(std::time::Duration::from_millis(120));
-
-        if needs_redraw {
-            render_frame(terminal, &mut state)?;
-        }
     }
 }
 

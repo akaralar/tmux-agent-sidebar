@@ -1,5 +1,6 @@
 use crate::event::{AgentEvent, WorktreeInfo, resolve_adapter};
 use crate::tmux;
+use crate::ui::text::wait_reason_label;
 use crate::{desktop_notification, desktop_notification::DesktopNotificationKind};
 
 use super::label::extract_tool_label;
@@ -821,7 +822,7 @@ fn notification_body(wait_reason: &str) -> String {
     if wait_reason.is_empty() {
         "Permission required".to_string()
     } else {
-        wait_reason.to_string()
+        wait_reason_label(wait_reason)
     }
 }
 

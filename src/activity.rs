@@ -36,6 +36,19 @@ pub fn log_file_path(pane_id: &str) -> PathBuf {
     PathBuf::from(format!("/tmp/tmux-agent-activity{encoded}.log"))
 }
 
+/// Last-modified time of a pane's activity log, or `None` when the file
+/// does not exist or its metadata cannot be queried.
+///
+/// The log is append-only with an occasional in-place truncation
+/// (`hook.rs` rewrites it when the line count exceeds 210), both of
+/// which bump the mtime, so refresh paths can use this as a cheap
+/// "anything to re-parse?" check before reading the file.
+pub fn log_mtime(pane_id: &str) -> Option<std::time::SystemTime> {
+    fs::metadata(log_file_path(pane_id))
+        .ok()
+        .and_then(|m| m.modified().ok())
+}
+
 fn parse_entry(line: &str) -> Option<ActivityEntry> {
     let mut parts = line.splitn(3, '|');
     let timestamp = parts.next()?.to_string();
