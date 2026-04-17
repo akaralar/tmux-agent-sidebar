@@ -223,7 +223,8 @@ fn run_app(
                         needs_redraw = true;
                         match key.code {
                             KeyCode::Esc => {
-                                if state.focus == Focus::ActivityLog || state.focus == Focus::Filter {
+                                if state.focus == Focus::ActivityLog || state.focus == Focus::Filter
+                                {
                                     state.focus = Focus::Panes;
                                 }
                             }
@@ -306,8 +307,10 @@ fn run_app(
                             }
                             KeyCode::BackTab => {
                                 state.next_bottom_tab();
-                                git_tab_active
-                                    .store(state.bottom_tab == BottomTab::GitStatus, Ordering::Relaxed);
+                                git_tab_active.store(
+                                    state.bottom_tab == BottomTab::GitStatus,
+                                    Ordering::Relaxed,
+                                );
                             }
                             _ => {}
                         }
