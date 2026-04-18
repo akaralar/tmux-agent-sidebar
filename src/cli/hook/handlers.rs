@@ -787,8 +787,9 @@ mod tests {
         // CI), the stamp stays unset but we at least verified the gate let
         // the call through. The stronger check — that the gate opens — is
         // covered by `notifications_enabled_all` only containing `Stop`.
-        let stamp = tmux::test_mock::get(pane, "@pane_os_notify_task_completed");
-        if let Some(raw) = stamp {
+        let stamp_key = "@pane_os_notify_task_completed";
+        if tmux::test_mock::contains(pane, stamp_key) {
+            let raw = tmux::test_mock::get(pane, stamp_key).unwrap_or_default();
             assert!(
                 raw.contains("session-ended:logout"),
                 "stamp must record the session-end fingerprint, got {raw}"
@@ -807,7 +808,9 @@ mod tests {
             "bypass_permissions_disabled",
             &notifications_enabled_all(),
         );
-        if let Some(raw) = tmux::test_mock::get(pane, "@pane_os_notify_task_completed") {
+        let stamp_key = "@pane_os_notify_task_completed";
+        if tmux::test_mock::contains(pane, stamp_key) {
+            let raw = tmux::test_mock::get(pane, stamp_key).unwrap_or_default();
             assert!(
                 raw.contains("session-ended:bypass_permissions_disabled"),
                 "stamp must record the session-end fingerprint, got {raw}"
