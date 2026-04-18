@@ -6,22 +6,11 @@
 
 ## Features
 
-- **See every agent at a glance**
-  One sidebar for all tmux sessions and windows.
-- **Watch work happen live**
-  Follow prompts, tool calls, and responses as they happen.
-- **Keep track of tasks and subagents**
-  See progress like `3/7` and the subagent tree beneath it.
-- **Stay on top of Git state**
-  Branch name, ahead/behind counts, PR number (`gh`), and diff stats stay visible.
-- **Group related panes together**
-  Worktrees stay with their repo, so context is easier to scan.
-- **Create or clean up worktrees from the sidebar**
-  Press `n` or click `+` to spawn a worktree and agent; press `x` or click `×` to remove it later.
-- **See pane metadata without hunting**
-  Ports and execution command info are shown inline.
-- **Get desktop notifications when something needs attention**
-  Completion, failures, and permission prompts can notify you on the desktop.
+- One sidebar for all tmux sessions and windows.
+- Live prompts, tool calls, responses, Git state, and pane metadata.
+- Task progress and subagent trees for supported agents.
+- Worktree visibility and lifecycle actions from the sidebar.
+- Desktop notifications when something needs attention.
 
 ## Agent Pane
 
@@ -172,6 +161,8 @@ Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar setup c
 
 ## Keybindings
 
+### Sidebar
+
 | Key | Action |
 |---|---|
 | `prefix + e` | Toggle sidebar |
@@ -181,17 +172,22 @@ Run ~/.tmux/plugins/tmux-agent-sidebar/target/release/tmux-agent-sidebar setup c
 | `h` / `Left` | Previous status filter |
 | `l` / `Right` | Next status filter |
 | `r` | Open repo filter popup |
-| `n` | Spawn a new worktree + agent |
-| `x` | Remove the selected spawn-created pane |
 | `Enter` | Jump to the selected pane or confirm the repo popup |
 | `Tab` | Cycle status filter |
 | `Shift+Tab` | Switch bottom panel tab |
 | `Esc` | Return focus or close the popup |
-| Mouse click `+` | Open the spawn modal for that repo |
-| Mouse click `×` | Open the close-pane modal for that worktree |
 | Mouse click | Jump to a pane, filter by status, or open the repo popup |
 
-### Spawn worktree modal
+### Worktree
+
+| Key | Action |
+|---|---|
+| `n` | Spawn a new worktree + agent |
+| `x` | Remove the selected spawn-created pane |
+| Mouse click `+` | Open the spawn modal for that repo |
+| Mouse click `×` | Open the close-pane modal for that worktree |
+
+#### Spawn Worktree Modal
 
 Opened with `n` or by clicking the `+` button next to a repo header.
 
@@ -203,7 +199,7 @@ Opened with `n` or by clicking the `+` button next to a repo header.
 | `Enter` | Create the worktree + window and launch the agent |
 | `Esc` / click outside | Cancel |
 
-### Close pane modal
+#### Close Pane Modal
 
 Opened with `x` on a spawn-created pane.
 
