@@ -195,18 +195,62 @@ fn unique_window_paths(output: &str) -> Vec<(String, String)> {
     windows
 }
 
+/// Decide whether `cmd_auto_close` should kill the window, given the raw
+/// outputs of the two tmux queries it performs. Extracted as a pure
+/// function so the guard logic is directly unit-testable without a
+/// running tmux server.
+///
+/// - `list_panes_output`: `Some(stdout)` from `list-panes -F #{@pane_role}`,
+///   or `None` if the tmux call failed.
+/// - `session_windows`: parsed value of `#{session_windows}`, or `None`
+///   if the tmux call failed or the value was unparseable.
+fn should_kill_window(list_panes_output: Option<&str>, session_windows: Option<u32>) -> bool {
+    // `list-panes` failed or returned nothing: the window is either gone
+    // already or tmux is too busy to answer. Do NOT treat "no output"
+    // as "no non-sidebar panes" — that would let us kill a live window
+    // whose query happened to race with another tmux command.
+    let Some(output) = list_panes_output else {
+        return false;
+    };
+    if output.trim().is_empty() {
+        return false;
+    }
+
+    let non_sidebar = output.lines().filter(|line| *line != "sidebar").count();
+    if non_sidebar != 0 {
+        return false;
+    }
+
+    // Guard against destroying the session. If this window is the only
+    // one left in its session, killing it drops every client attached
+    // to that session (e.g. multiple Ghostty tabs sharing the same
+    // `main` session all close at once). Leave the window alone and
+    // let the user close the sidebar manually.
+    match session_windows {
+        Some(n) if n > 1 => true,
+        _ => false,
+    }
+}
+
 pub(crate) fn cmd_auto_close(args: &[String]) -> i32 {
     let window_id = match args.first() {
         Some(id) => id.as_str(),
         None => return 0,
     };
 
-    let output =
-        tmux::run_tmux(&["list-panes", "-t", window_id, "-F", "#{@pane_role}"]).unwrap_or_default();
+    let list_panes_output =
+        tmux::run_tmux(&["list-panes", "-t", window_id, "-F", "#{@pane_role}"]);
 
-    let non_sidebar = output.lines().filter(|line| *line != "sidebar").count();
+    let session_windows = tmux::run_tmux(&[
+        "display-message",
+        "-t",
+        window_id,
+        "-p",
+        "#{session_windows}",
+    ])
+    .and_then(|s| s.trim().parse().ok());
 
-    if non_sidebar == 0 {
+    if should_kill_window(list_panes_output.as_deref(), session_windows) {
         let _ = tmux::run_tmux(&["kill-window", "-t", window_id]);
     }
 
@@ -248,5 +292,62 @@ mod tests {
             unique_window_paths(output),
             vec![("%1".to_string(), "/tmp".to_string())]
         );
+    }
+
+    // ─── should_kill_window ───────────────────────────────────────────
+
+    #[test]
+    fn should_kill_window_kills_when_only_sidebar_and_other_windows_exist() {
+        // Classic intended path: sidebar alone in a window, session has
+        // other windows to fall back on.
+        assert!(should_kill_window(Some("sidebar"), Some(2)));
+    }
+
+    #[test]
+    fn should_kill_window_skips_when_non_sidebar_pane_remains() {
+        // Another pane with `@pane_role` explicitly set to something
+        // non-sidebar (e.g. a spawn-marked pane) keeps the window alive.
+        assert!(!should_kill_window(Some("sidebar\npane"), Some(5)));
+        // `@pane_role` unset renders as an empty line — that pane is
+        // a regular user pane, not a sidebar, so the window must stay.
+        // The real tmux output for [sidebar pane, regular pane] is
+        // "sidebar\n\n" (sidebar's role, then the regular pane's empty
+        // role followed by the final record separator).
+        assert!(!should_kill_window(Some("sidebar\n\n"), Some(5)));
+        assert!(!should_kill_window(Some("\nsidebar\n"), Some(5)));
+    }
+
+    #[test]
+    fn should_kill_window_skips_when_list_panes_failed() {
+        // `list-panes` failure must never be treated as "window is empty" —
+        // that used to let a busy-tmux race kill a live window.
+        assert!(!should_kill_window(None, Some(5)));
+    }
+
+    #[test]
+    fn should_kill_window_skips_when_list_panes_empty() {
+        // Whitespace-only output (e.g. window already gone) must not
+        // trigger a kill either.
+        assert!(!should_kill_window(Some(""), Some(5)));
+        assert!(!should_kill_window(Some("   \n"), Some(5)));
+    }
+
+    #[test]
+    fn should_kill_window_skips_when_session_has_only_this_window() {
+        // Core regression guard: killing the last window of a session
+        // drops every attached client. With multiple Ghostty tabs
+        // sharing a single `main` session this manifested as every tab
+        // dying at once. Keep the sidebar stranded rather than nuke
+        // the session.
+        assert!(!should_kill_window(Some("sidebar"), Some(1)));
+    }
+
+    #[test]
+    fn should_kill_window_skips_when_session_windows_query_failed() {
+        // If we cannot prove the session has other windows, err on
+        // the side of preserving the session. Better to leave a
+        // lingering sidebar pane than to destroy a live workspace.
+        assert!(!should_kill_window(Some("sidebar"), None));
+        assert!(!should_kill_window(Some("sidebar"), Some(0)));
     }
 }
