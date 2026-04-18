@@ -17,7 +17,6 @@ pub enum MascotState {
     WalkLeft,
 }
 
-pub const MASCOT_WIDTH: u16 = 7;
 pub const MASCOT_HOME_X: u16 = 1;
 pub const DESK_OFFSET: u16 = 0;
 pub const DESK_WIDTH: u16 = 4;
