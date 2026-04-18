@@ -898,15 +898,15 @@ mod tests {
         let mut state = AppState::new("%0".into());
         state.mascot_state = MascotState::Working;
         let panel_width = 40u16;
-        let working_width = CHAIR_WIDTH + 2;
+        let working_width = CHAIR_WIDTH + 3;
         let stop_x = panel_width.saturating_sub(DESK_OFFSET + DESK_WIDTH + working_width);
         state.mascot_x = stop_x;
         state.mascot_frame = 1;
         let output = render_mascot_scene(&state, 2, panel_width, 14);
         let expected = [
-            "                                 ▄▄ ▐█▌",
-            "                                 █▀╴▐█▌",
-            "                                 ▀▀████",
+            "                                ▄▄  ▐█▌",
+            "                                █▀╴ ▐█▌",
+            "                                ▀▀ ████",
             "                                ██ █  █",
         ]
         .join("\n");
@@ -918,15 +918,15 @@ mod tests {
         let mut state = AppState::new("%0".into());
         state.mascot_state = MascotState::Working;
         let panel_width = 40u16;
-        let working_width = CHAIR_WIDTH + 2;
+        let working_width = CHAIR_WIDTH + 3;
         let stop_x = panel_width.saturating_sub(DESK_OFFSET + DESK_WIDTH + working_width);
         state.mascot_x = stop_x;
         state.mascot_frame = 2;
         let output = render_mascot_scene(&state, 2, panel_width, 14);
         let expected = [
-            "                                 ▄▄ ▐█▌",
-            "                                 █▀─▐█▌",
-            "                                 ▀▀████",
+            "                                ▄▄  ▐█▌",
+            "                                █▀─ ▐█▌",
+            "                                ▀▀ ████",
             "                                ██ █  █",
         ]
         .join("\n");
@@ -938,15 +938,15 @@ mod tests {
         let mut state = AppState::new("%0".into());
         state.mascot_state = MascotState::Working;
         let panel_width = 40u16;
-        let working_width = CHAIR_WIDTH + 2;
+        let working_width = CHAIR_WIDTH + 3;
         let stop_x = panel_width.saturating_sub(DESK_OFFSET + DESK_WIDTH + working_width);
         state.mascot_x = stop_x;
         state.mascot_frame = 3;
         let output = render_mascot_scene(&state, 2, panel_width, 14);
         let expected = [
-            "                                 ▄▄ ▐█▌",
-            "                                 █▀╶▐█▌",
-            "                                 ▀▀████",
+            "                                ▄▄  ▐█▌",
+            "                                █▀╶ ▐█▌",
+            "                                ▀▀ ████",
             "                                ██ █  █",
         ]
         .join("\n");
