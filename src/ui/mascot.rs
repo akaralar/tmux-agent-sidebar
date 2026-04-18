@@ -523,8 +523,10 @@ fn walking_vertical_lift(state: &crate::state::AppState) -> u16 {
 /// Draw mascot, desk, chair, and papers.
 /// `running_count` controls paper stack height.
 ///
-/// Layout: all elements share the same baseline (bottom_area.y - 1).
-/// Each element's bottom row sits on that baseline, growing upward.
+/// `bottom_area` is the dedicated band between the pane list and the bottom
+/// panel. All sprites render inside it, sharing a baseline at its last row
+/// (the row directly above the bottom panel's top border). The band must be
+/// tall enough to fit the mascot scene — see [`super::MASCOT_SCENE_HEIGHT`].
 ///
 /// Working state example:
 /// ```text
@@ -536,9 +538,12 @@ fn walking_vertical_lift(state: &crate::state::AppState) -> u16 {
 /// row above:    mascot body + desk ████
 /// row above:    mascot head/hand
 pub fn draw_mascot(frame: &mut Frame, state: &AppState, bottom_area: Rect, running_count: usize) {
+    if bottom_area.height == 0 || bottom_area.width == 0 {
+        return;
+    }
     let panel_width = bottom_area.width;
-    // Baseline: the bottom-most row for all elements.
-    let baseline = bottom_area.y.saturating_sub(1);
+    // Baseline: the bottom-most row for all elements, inside the drawable area.
+    let baseline = bottom_area.y + bottom_area.height - 1;
 
     // --- Positions ---
     let desk_x = bottom_area.x + panel_width.saturating_sub(DESK_OFFSET + DESK_WIDTH + 1);

@@ -17,6 +17,11 @@ use crate::state::AppState;
 
 pub const BOTTOM_PANEL_HEIGHT: u16 = 20;
 
+/// Rows reserved between the pane list and the bottom panel when the mascot is
+/// enabled. The mascot and its desk/chair all render inside this band so they
+/// never overdraw the pane list above or the bottom panel's border below.
+pub const MASCOT_SCENE_HEIGHT: u16 = 5;
+
 /// Read `@sidebar_bottom_height` from tmux global options, falling back to the default.
 /// A value of 0 hides the bottom panel entirely.
 pub fn bottom_panel_height_from_options(opts: &HashMap<String, String>) -> u16 {
@@ -53,13 +58,18 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     let area = frame.area();
 
     let bot_h = state.bottom_panel_height;
+    let divider_h = if bot_h > 0 && state.mascot_enabled {
+        MASCOT_SCENE_HEIGHT
+    } else {
+        1
+    };
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(if bot_h > 0 {
             vec![
                 Constraint::Min(1),
-                Constraint::Length(1),
+                Constraint::Length(divider_h),
                 Constraint::Length(bot_h),
             ]
         } else {
@@ -73,7 +83,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         bottom::draw_bottom(frame, state, chunks[2]);
         if state.mascot_enabled {
             let running_count = state.running_count();
-            mascot::draw_mascot(frame, state, chunks[2], running_count);
+            mascot::draw_mascot(frame, state, chunks[1], running_count);
         }
     }
 }
