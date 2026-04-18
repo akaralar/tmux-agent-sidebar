@@ -126,6 +126,7 @@ fn status_row(
             PermissionMode::DontAsk => theme.badge_auto,
             PermissionMode::Plan => theme.badge_plan,
             PermissionMode::AcceptEdits => theme.badge_auto,
+            PermissionMode::Defer => theme.badge_auto,
             PermissionMode::Default => theme.text_muted,
         };
         left_spans.push(Span::styled(
@@ -510,7 +511,7 @@ fn running_icon_for<'a>(
 mod tests {
     use super::*;
     use crate::group::PaneGitInfo;
-    use crate::tmux::{AgentType, PaneInfo, PermissionMode};
+    use crate::tmux::{AgentType, PaneInfo, PermissionMode, WorktreeMetadata};
     use crate::ui::icons::StatusIcons;
 
     fn pane(permission_mode: PermissionMode, status: PaneStatus, prompt: &str) -> PaneInfo {
@@ -538,8 +539,7 @@ mod tests {
             permission_mode,
             subagents: vec![],
             pane_pid: None,
-            worktree_name: String::new(),
-            worktree_branch: String::new(),
+            worktree: WorktreeMetadata::default(),
             session_id: None,
             session_name: String::new(),
             sidebar_spawned: false,
@@ -584,6 +584,31 @@ mod tests {
 
         let status = line_text(&lines[0]);
         assert!(status.contains(" codex auto"));
+    }
+
+    #[test]
+    fn render_pane_lines_shows_defer_badge() {
+        let theme = ColorTheme::default();
+        let pane = pane(PermissionMode::Defer, PaneStatus::Running, "");
+        let lines = render_pane_lines_with_ports(
+            &pane,
+            &PaneGitInfo::default(),
+            None,
+            None,
+            false,
+            false,
+            40,
+            &StatusIcons::default(),
+            &theme,
+            0,
+            0,
+        );
+
+        let status = line_text(&lines[0]);
+        assert!(
+            status.contains(" codex defer"),
+            "defer permission mode should render its badge, got: {status}"
+        );
     }
 
     #[test]

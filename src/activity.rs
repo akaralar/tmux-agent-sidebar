@@ -10,18 +10,23 @@ pub struct ActivityEntry {
 
 impl ActivityEntry {
     pub fn tool_color_index(&self) -> u8 {
+        // MCP tool names arrive as `mcp__<server>__<tool>`; their variable
+        // suffixes would otherwise fall through to the gray fallback.
+        if self.tool.starts_with("mcp__") {
+            return 183; // soft violet
+        }
         match self.tool.as_str() {
-            "Edit" | "Write" => 180,         // soft yellow
-            "Bash" | "PowerShell" => 114,    // soft green
-            "Read" | "Glob" | "Grep" => 110, // soft blue
-            "Agent" => 181,                  // soft pink
-            "WebFetch" | "WebSearch" => 117, // soft cyan
-            "Skill" => 218,                  // soft magenta
+            "Edit" | "Write" => 180,                  // soft yellow
+            "Bash" | "PowerShell" | "Monitor" => 114, // soft green (Bash-permission category)
+            "Read" | "Glob" | "Grep" => 110,          // soft blue
+            "Agent" => 181,                           // soft pink
+            "WebFetch" | "WebSearch" => 117,          // soft cyan
+            "Skill" => 218,                           // soft magenta
             "TaskCreate" | "TaskUpdate" | "TaskGet" | "TaskList" | "TaskStop" | "TaskOutput" => 223, // soft gold
             "SendMessage" | "TeamCreate" | "TeamDelete" => 182, // soft lavender
             "LSP" => 146,                                       // soft teal
             "NotebookEdit" => 180,                              // soft yellow (like Edit)
-            "AskUserQuestion" => 216,                           // soft orange
+            "AskUserQuestion" | "PushNotification" => 216,      // soft orange (attention)
             "CronCreate" | "CronDelete" | "CronList" | "RemoteTrigger" => 151, // soft mint
             "EnterPlanMode" | "ExitPlanMode" => 189,            // soft periwinkle
             "EnterWorktree" | "ExitWorktree" => 179,            // soft bronze
@@ -34,6 +39,19 @@ impl ActivityEntry {
 pub fn log_file_path(pane_id: &str) -> PathBuf {
     let encoded = pane_id.replace('%', "_");
     PathBuf::from(format!("/tmp/tmux-agent-activity{encoded}.log"))
+}
+
+/// Last-modified time of a pane's activity log, or `None` when the file
+/// does not exist or its metadata cannot be queried.
+///
+/// The log is append-only with an occasional in-place truncation
+/// (`hook.rs` rewrites it when the line count exceeds 210), both of
+/// which bump the mtime, so refresh paths can use this as a cheap
+/// "anything to re-parse?" check before reading the file.
+pub fn log_mtime(pane_id: &str) -> Option<std::time::SystemTime> {
+    fs::metadata(log_file_path(pane_id))
+        .ok()
+        .and_then(|m| m.modified().ok())
 }
 
 fn parse_entry(line: &str) -> Option<ActivityEntry> {
@@ -261,10 +279,40 @@ mod tests {
 
         let entry = ActivityEntry {
             timestamp: "10:00".into(),
+            tool: "Monitor".into(),
+            label: "tail -f server.log".into(),
+        };
+        assert_eq!(entry.tool_color_index(), 114);
+
+        let entry = ActivityEntry {
+            timestamp: "10:00".into(),
+            tool: "PushNotification".into(),
+            label: "Deploy complete".into(),
+        };
+        assert_eq!(entry.tool_color_index(), 216);
+
+        let entry = ActivityEntry {
+            timestamp: "10:00".into(),
             tool: "UnknownTool".into(),
             label: "".into(),
         };
         assert_eq!(entry.tool_color_index(), 244);
+
+        // Any `mcp__<server>__<tool>` name gets the MCP category color
+        // instead of falling through to the gray default.
+        let entry = ActivityEntry {
+            timestamp: "10:00".into(),
+            tool: "mcp__context7__query-docs".into(),
+            label: "".into(),
+        };
+        assert_eq!(entry.tool_color_index(), 183);
+
+        let entry = ActivityEntry {
+            timestamp: "10:00".into(),
+            tool: "mcp__chrome-devtools__navigate_page".into(),
+            label: "".into(),
+        };
+        assert_eq!(entry.tool_color_index(), 183);
     }
 
     #[test]

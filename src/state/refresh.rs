@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::activity::{self, TaskProgress};
@@ -21,6 +21,7 @@ struct PaneTaskUpdate {
     progress: Option<TaskProgress>,
     dismissed_total: Option<usize>,
     inactive_since: Option<u64>,
+    log_mtime: Option<std::time::SystemTime>,
 }
 
 pub(crate) fn classify_task_progress(
@@ -56,8 +57,35 @@ impl AppState {
         sidebar_focused: bool,
         sessions: Vec<SessionInfo>,
     ) {
-        self.sidebar_focused = sidebar_focused;
+        self.focus_state.sidebar_focused = sidebar_focused;
+        // Capture the prior `pane_id → session_id` map so we can detect
+        // anything that should re-trigger `refresh_session_names`:
+        //   - a brand-new pane_id (first appearance)
+        //   - an existing pane whose session_id changed (e.g. /clear or
+        //     a Codex session swap reuses the same pane_id but binds a
+        //     new session label)
+        let prev_session_ids: HashMap<String, Option<String>> = self
+            .repo_groups
+            .iter()
+            .flat_map(|g| {
+                g.panes
+                    .iter()
+                    .map(|(p, _)| (p.pane_id.clone(), p.session_id.clone()))
+            })
+            .collect();
         self.repo_groups = crate::group::group_panes_by_repo(&sessions);
+        if !self.sessions.dirty
+            && self
+                .repo_groups
+                .iter()
+                .flat_map(|g| g.panes.iter())
+                .any(|(p, _)| match prev_session_ids.get(&p.pane_id) {
+                    None => true,
+                    Some(prev_sid) => *prev_sid != p.session_id,
+                })
+        {
+            self.sessions.dirty = true;
+        }
         self.prune_pane_states_to_current_panes();
         self.rebuild_row_targets();
         self.find_focused_pane();
@@ -129,7 +157,10 @@ impl AppState {
         } else {
             self.apply_session_snapshot(focused, sessions);
         }
-        self.refresh_session_names();
+        if self.sessions.dirty {
+            self.refresh_session_names();
+            self.sessions.dirty = false;
+        }
         self.refresh_activity_data();
         window_active
     }
@@ -142,7 +173,7 @@ impl AppState {
         for group in &mut self.repo_groups {
             for (pane, _) in &mut group.panes {
                 if let Some(sid) = &pane.session_id
-                    && let Some(name) = self.session_names.get(sid)
+                    && let Some(name) = self.sessions.names.get(sid)
                 {
                     pane.session_name.clone_from(name);
                 } else {
@@ -162,13 +193,11 @@ impl AppState {
             || self.timers.last_port_refresh.elapsed() >= PORT_REFRESH_INTERVAL
         {
             let scanned = crate::port::scan_session_process_snapshot(sessions)?;
-            let mut active_ids: HashSet<String> = HashSet::new();
             let mut updates: Vec<(String, Vec<u16>, Option<String>)> = Vec::new();
             let mut dead_panes: Vec<String> = Vec::new();
             for session in sessions {
                 for window in &session.windows {
                     for pane in &window.panes {
-                        active_ids.insert(pane.pane_id.clone());
                         if !scanned.live_agent_panes.contains(&pane.pane_id) {
                             dead_panes.push(pane.pane_id.clone());
                         }
@@ -193,8 +222,9 @@ impl AppState {
                 Self::clear_dead_agent_metadata(&pane_id);
                 self.clear_pane_state(&pane_id);
             }
-            self.pane_states
-                .retain(|pane_id, _| active_ids.contains(pane_id));
+            // pane_states.retain by current panes is handled by
+            // `apply_session_snapshot` -> `prune_pane_states_to_current_panes`
+            // which runs immediately after this function in `refresh()`.
             self.timers.port_scan_initialized = true;
             self.timers.last_port_refresh = std::time::Instant::now();
             return Some(scanned);
@@ -204,11 +234,35 @@ impl AppState {
     }
 
     pub(crate) fn refresh_task_progress(&mut self) {
-        let mut active_pane_ids: HashSet<String> = HashSet::new();
         let mut updates: Vec<PaneTaskUpdate> = Vec::new();
         for group in &self.repo_groups {
             for (pane, _) in &group.panes {
-                active_pane_ids.insert(pane.pane_id.clone());
+                let prior_state = self.pane_state(&pane.pane_id).cloned().unwrap_or_default();
+                let current_mtime = activity::log_mtime(&pane.pane_id);
+                // Skip the (full-file) re-parse when the activity log
+                // hasn't been touched since the last tick AND the pane
+                // is still active. We must still re-evaluate the
+                // inactive-grace path while the agent is idle so that a
+                // long-stalled progress bar gets dismissed even if the
+                // log file itself stops changing.
+                let agent_active = matches!(pane.status, PaneStatus::Running | PaneStatus::Waiting);
+                let log_unchanged =
+                    current_mtime.is_some() && current_mtime == prior_state.task_progress_log_mtime;
+                if log_unchanged && agent_active {
+                    // Just refresh the mtime bookkeeping so we don't
+                    // accidentally drop the cache on a future iteration
+                    // where current_mtime suddenly becomes None (e.g.
+                    // /tmp clean-up). All other prior_state fields
+                    // remain authoritative.
+                    updates.push(PaneTaskUpdate {
+                        pane_id: pane.pane_id.clone(),
+                        progress: prior_state.task_progress.clone(),
+                        dismissed_total: prior_state.task_dismissed_total,
+                        inactive_since: None,
+                        log_mtime: current_mtime,
+                    });
+                    continue;
+                }
                 // Read all entries for task progress (not limited to display max)
                 // so that TaskCreate entries aren't lost when subagents flood the log
                 let entries = activity::read_activity_log(&pane.pane_id, 0);
@@ -226,11 +280,7 @@ impl AppState {
                 // Running/Waiting within that window, the timer is reset.
                 const INACTIVE_GRACE_SECS: u64 = 3;
 
-                let agent_inactive =
-                    !matches!(pane.status, PaneStatus::Running | PaneStatus::Waiting);
-
-                let prior_state = self.pane_state(&pane.pane_id).cloned().unwrap_or_default();
-                let next_inactive_since = if agent_inactive {
+                let next_inactive_since = if !agent_active {
                     Some(prior_state.inactive_since.unwrap_or(self.now))
                 } else {
                     None
@@ -262,6 +312,7 @@ impl AppState {
                     progress: next_progress,
                     dismissed_total: next_dismissed_total,
                     inactive_since: next_inactive_since,
+                    log_mtime: current_mtime,
                 });
             }
         }
@@ -270,28 +321,41 @@ impl AppState {
             pane_state.inactive_since = update.inactive_since;
             pane_state.task_dismissed_total = update.dismissed_total;
             pane_state.task_progress = update.progress;
+            pane_state.task_progress_log_mtime = update.log_mtime;
         }
-        self.pane_states
-            .retain(|id, _| active_pane_ids.contains(id));
+        // pane_states.retain is handled by `apply_session_snapshot` ->
+        // `prune_pane_states_to_current_panes` earlier in `refresh()`.
     }
 
     pub(crate) fn refresh_activity_log(&mut self) {
-        if let Some(ref pane_id) = self.focused_pane_id {
-            // Task-reset markers are internal bookkeeping for parse_task_progress;
-            // they should never appear in the user-facing Activity tab.
-            let mut entries = activity::read_activity_log(pane_id, self.activity_max_entries);
-            entries.retain(|e| e.tool != activity::TASK_RESET_MARKER);
-            self.activity_entries = entries;
-        } else {
-            self.activity_entries.clear();
+        let Some(ref pane_id) = self.focus_state.focused_pane_id else {
+            self.activity.entries.clear();
+            self.activity.log_cache = None;
+            return;
+        };
+        let current_mtime = activity::log_mtime(pane_id);
+        if let (Some(mtime), Some((cached_id, cached_mtime))) =
+            (current_mtime, self.activity.log_cache.as_ref())
+            && cached_id == pane_id
+            && *cached_mtime == mtime
+        {
+            return;
         }
+        // Task-reset markers are internal bookkeeping for parse_task_progress;
+        // they should never appear in the user-facing Activity tab.
+        let mut entries = activity::read_activity_log(pane_id, self.activity.max_entries);
+        entries.retain(|e| e.tool != activity::TASK_RESET_MARKER);
+        self.activity.entries = entries;
+        self.activity.log_cache = current_mtime.map(|m| (pane_id.clone(), m));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tmux::{AgentType, PaneInfo, PaneStatus, PermissionMode, SessionInfo, WindowInfo};
+    use crate::tmux::{
+        AgentType, PaneInfo, PaneStatus, PermissionMode, SessionInfo, WindowInfo, WorktreeMetadata,
+    };
 
     fn test_pane(id: &str) -> PaneInfo {
         PaneInfo {
@@ -309,8 +373,7 @@ mod tests {
             permission_mode: PermissionMode::Default,
             subagents: vec![],
             pane_pid: None,
-            worktree_name: String::new(),
-            worktree_branch: String::new(),
+            worktree: WorktreeMetadata::default(),
             session_id: None,
             session_name: String::new(),
             sidebar_spawned: false,
@@ -387,8 +450,8 @@ mod tests {
             pane_with_session("%1", "sess-a"),
             pane_with_session("%2", "sess-b"),
         ]);
-        state.session_names.insert("sess-a".into(), "alpha".into());
-        state.session_names.insert("sess-b".into(), "beta".into());
+        state.sessions.names.insert("sess-a".into(), "alpha".into());
+        state.sessions.names.insert("sess-b".into(), "beta".into());
 
         state.refresh_session_names();
 
@@ -419,6 +482,41 @@ mod tests {
     }
 
     #[test]
+    fn apply_session_snapshot_marks_dirty_when_existing_pane_swaps_session_id() {
+        // Pane %1 keeps the same pane_id across snapshots but its
+        // session_id changes (e.g. the agent restarted with a new
+        // Claude session). Without dirty propagation,
+        // refresh_session_names would be skipped and the UI would
+        // keep showing the old session label forever.
+        let mut state = state_with_panes(vec![pane_with_session("%1", "sess-old")]);
+        state.sessions.dirty = false;
+
+        let next_sessions = test_session(vec![pane_with_session("%1", "sess-new")]);
+        state.apply_session_snapshot(false, next_sessions);
+
+        assert!(
+            state.sessions.dirty,
+            "session_names_dirty must be set when an existing pane's session_id changes"
+        );
+    }
+
+    #[test]
+    fn apply_session_snapshot_does_not_mark_dirty_when_session_ids_unchanged() {
+        // Same pane, same session_id across snapshots — no need to
+        // re-walk every pane, dirty flag should stay clear.
+        let mut state = state_with_panes(vec![pane_with_session("%1", "sess-a")]);
+        state.sessions.dirty = false;
+
+        let next_sessions = test_session(vec![pane_with_session("%1", "sess-a")]);
+        state.apply_session_snapshot(false, next_sessions);
+
+        assert!(
+            !state.sessions.dirty,
+            "session_names_dirty must remain clear when nothing changed"
+        );
+    }
+
+    #[test]
     fn refresh_session_names_clears_label_for_pane_with_no_session_id() {
         // Pane has a session_name set but no session_id (e.g. a
         // non-Claude agent or a pane that has not reported one yet).
@@ -426,7 +524,7 @@ mod tests {
         // to a known session.
         let mut state = state_with_panes(vec![test_pane("%1")]);
         state.repo_groups[0].panes[0].0.session_name = "stray".into();
-        state.session_names.insert("sess-a".into(), "alpha".into());
+        state.sessions.names.insert("sess-a".into(), "alpha".into());
 
         state.refresh_session_names();
 

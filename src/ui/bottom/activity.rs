@@ -7,12 +7,12 @@ use ratatui::{
 };
 
 use crate::state::AppState;
-use crate::ui::text::{display_width, pad_to, wrap_text_char};
+use crate::ui::text::{display_width, wrap_text_char};
 
 pub(super) fn draw_activity_content(frame: &mut Frame, state: &mut AppState, inner: Rect) {
     let theme = &state.theme;
 
-    if state.activity_entries.is_empty() {
+    if state.activity.entries.is_empty() {
         super::render_centered(frame, inner, "No activity yet", theme.text_muted);
         return;
     }
@@ -23,12 +23,16 @@ pub(super) fn draw_activity_content(frame: &mut Frame, state: &mut AppState, inn
     // Leave one blank row above the first activity entry for breathing room.
     lines.push(Line::from(""));
 
-    for entry in &state.activity_entries {
+    for entry in &state.activity.entries {
         let tool_color = Color::Indexed(entry.tool_color_index());
 
         let ts_dw = display_width(&entry.timestamp);
         let tool_dw = display_width(&entry.tool);
-        let gap = pad_to(ts_dw + tool_dw, inner_w);
+        // Always keep at least one space between the timestamp and the tool
+        // name — when the two together would otherwise fill the row, a plain
+        // right-align would leave them touching.
+        let gap_len = inner_w.saturating_sub(ts_dw + tool_dw).max(1);
+        let gap = " ".repeat(gap_len);
         let line1 = Line::from(vec![
             Span::styled(
                 entry.timestamp.clone(),
@@ -51,10 +55,14 @@ pub(super) fn draw_activity_content(frame: &mut Frame, state: &mut AppState, inn
         }
     }
 
-    state.activity_scroll.total_lines = lines.len();
-    state.activity_scroll.visible_height = inner.height as usize;
+    state.activity.scroll.total_lines = lines.len();
+    state.activity.scroll.visible_height = inner.height as usize;
+    // Clamp `offset` to the new total/visible. When entries shrink
+    // (focus change, log trim) the stale offset would otherwise produce
+    // an empty or over-scrolled paragraph.
+    state.activity.scroll.scroll(0);
 
-    let scroll_offset = state.activity_scroll.offset as u16;
+    let scroll_offset = state.activity.scroll.offset as u16;
     let paragraph = Paragraph::new(lines).scroll((scroll_offset, 0));
     frame.render_widget(paragraph, inner);
 }

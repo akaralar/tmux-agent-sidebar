@@ -2,7 +2,7 @@
 use ratatui::style::{Color, Modifier};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 use tmux_agent_sidebar::state::AppState;
-use tmux_agent_sidebar::tmux::{AgentType, PaneInfo, PaneStatus, SessionInfo};
+use tmux_agent_sidebar::tmux::{AgentType, PaneInfo, PaneStatus, SessionInfo, WorktreeMetadata};
 use tmux_agent_sidebar::ui;
 
 pub const FIXED_NOW: u64 = 1_700_000_000;
@@ -117,8 +117,7 @@ pub fn make_pane(agent: AgentType, status: PaneStatus) -> PaneInfo {
         permission_mode: tmux_agent_sidebar::tmux::PermissionMode::Default,
         subagents: vec![],
         pane_pid: None,
-        worktree_name: String::new(),
-        worktree_branch: String::new(),
+        worktree: WorktreeMetadata::default(),
         session_id: None,
         session_name: String::new(),
         sidebar_spawned: false,
@@ -145,8 +144,8 @@ pub fn make_repo_group(name: &str, panes: Vec<PaneInfo>) -> tmux_agent_sidebar::
 pub fn make_state(_sessions: Vec<SessionInfo>) -> AppState {
     let mut state = AppState::new("%99".into());
     state.now = FIXED_NOW;
-    state.sidebar_focused = true;
-    state.focused_pane_id = Some("%1".into());
+    state.focus_state.sidebar_focused = true;
+    state.focus_state.focused_pane_id = Some("%1".into());
     state.notices.missing_hook_groups = vec![tmux_agent_sidebar::state::NoticesMissingHookGroup {
         agent: "claude".into(),
         hooks: vec!["Stop".into()],
