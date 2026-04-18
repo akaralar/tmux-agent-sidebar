@@ -510,8 +510,10 @@ fn walking_vertical_lift(state: &crate::state::AppState) -> u16 {
         state.mascot_state,
         MascotState::WalkRight | MascotState::WalkLeft
     );
-    let phase = (state.mascot_walk_tick + (state.mascot_walk_seed % 6)) % 6;
-    if is_walking && state.mascot_walk_tick >= 4 && phase < 2 {
+    if is_walking
+        && state.mascot_walk_bounce_lift_until > 0
+        && state.mascot_walk_tick < state.mascot_walk_bounce_lift_until
+    {
         2
     } else {
         0
@@ -619,7 +621,9 @@ fn render_lines(frame: &mut Frame, lines: &[Line<'_>], x: u16, start_y: u16) {
             continue;
         }
         let line_width: u16 = line.spans.iter().map(|s| s.content.width() as u16).sum();
-        let available = frame.area().width.saturating_sub(x.saturating_add(1));
+        let area = frame.area();
+        let right = area.x.saturating_add(area.width);
+        let available = right.saturating_sub(x);
         if available == 0 {
             continue;
         }
@@ -814,29 +818,29 @@ mod tests {
     }
 
     #[test]
-    fn walking_vertical_lift_triggers_on_matching_phase() {
+    fn walking_vertical_lift_triggers_inside_scheduled_window() {
         let mut state = AppState::new("%0".into());
         state.mascot_state = MascotState::WalkRight;
         state.mascot_walk_tick = 4;
-        state.mascot_walk_seed = 2;
+        state.mascot_walk_bounce_lift_until = 6;
         assert_eq!(walking_vertical_lift(&state), 2);
     }
 
     #[test]
-    fn walking_vertical_lift_skips_other_phases() {
+    fn walking_vertical_lift_skips_outside_scheduled_window() {
         let mut state = AppState::new("%0".into());
         state.mascot_state = MascotState::WalkRight;
-        state.mascot_walk_tick = 3;
-        state.mascot_walk_seed = 0;
+        state.mascot_walk_tick = 6;
+        state.mascot_walk_bounce_lift_until = 6;
         assert_eq!(walking_vertical_lift(&state), 0);
     }
 
     #[test]
-    fn walking_vertical_lift_skips_startup_ticks() {
+    fn walking_vertical_lift_skips_when_not_scheduled() {
         let mut state = AppState::new("%0".into());
         state.mascot_state = MascotState::WalkRight;
-        state.mascot_walk_tick = 1;
-        state.mascot_walk_seed = 0;
+        state.mascot_walk_tick = 5;
+        state.mascot_walk_bounce_lift_until = 0;
         assert_eq!(walking_vertical_lift(&state), 0);
     }
 

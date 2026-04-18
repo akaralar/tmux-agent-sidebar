@@ -1182,7 +1182,11 @@ impl AppState {
                     self.mascot_walk_bounce_lift_until = self.mascot_walk_tick + 2;
                     reseed_mascot_walk_bounce(self);
                 }
-                self.mascot_frame = if self.mascot_frame == 1 { 2 } else { 1 };
+                self.mascot_frame = match self.mascot_frame {
+                    1 => 2,
+                    2 => 3,
+                    _ => 1,
+                };
                 if self.mascot_x >= stop_x {
                     self.mascot_x = stop_x;
                     self.mascot_state = crate::ui::mascot::MascotState::Working;
@@ -1252,7 +1256,11 @@ impl AppState {
                     self.mascot_walk_bounce_lift_until = self.mascot_walk_tick + 2;
                     reseed_mascot_walk_bounce(self);
                 }
-                self.mascot_frame = if self.mascot_frame == 1 { 2 } else { 1 };
+                self.mascot_frame = match self.mascot_frame {
+                    1 => 2,
+                    2 => 3,
+                    _ => 1,
+                };
                 if self.mascot_x <= crate::ui::mascot::MASCOT_HOME_X {
                     self.mascot_x = crate::ui::mascot::MASCOT_HOME_X;
                     self.mascot_state = crate::ui::mascot::MascotState::Idle;
