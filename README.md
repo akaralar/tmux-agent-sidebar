@@ -12,10 +12,20 @@
 
 ## Features
 
-- **Every pane, one view** — tracks Claude Code and Codex panes across all tmux sessions and windows.
-- **Live metadata** — prompts, tool calls, response previews, wait reasons, task progress, and subagent trees refresh as the agents work.
-- **Worktrees, included** — spawn a fresh worktree + agent from the sidebar and tear it down — window, worktree, and branch — in one keystroke.
-- **Desktop notifications** — native alerts when an agent finishes, needs permission, or errors out.
+- **Every pane, one view** 
+  — tracks Claude Code and Codex panes across all tmux sessions and windows
+- **Live metadata** 
+  — prompts, tool calls, response previews, wait reasons, task progress, and subagent trees refresh as the agents work
+- **Worktrees, included** 
+  — spawn a fresh worktree + agent from the sidebar and tear it down — window, worktree, and branch — in one keystroke
+- **Desktop notifications** 
+  — native alerts when an agent finishes, needs permission, or errors out
+
+## Requirements
+
+- tmux 3.0+
+- [TPM](https://github.com/tmux-plugins/tpm) (or the manual install in [Installation](https://hiroppy.github.io/tmux-agent-sidebar/getting-started/installation/))
+- [GitHub CLI](https://cli.github.com/) (optional — required only for PR numbers in the Git tab)
 
 ## Quick Start
 
@@ -55,12 +65,6 @@ The [documentation site](https://hiroppy.github.io/tmux-agent-sidebar/) covers e
 - [Activity log](https://hiroppy.github.io/tmux-agent-sidebar/features/activity-log/) · [Git tab](https://hiroppy.github.io/tmux-agent-sidebar/features/git-status/) · [Notifications](https://hiroppy.github.io/tmux-agent-sidebar/features/notifications/)
 - [Agent support matrix](https://hiroppy.github.io/tmux-agent-sidebar/agents/)
 - [Keybindings](https://hiroppy.github.io/tmux-agent-sidebar/reference/keybindings/) · [tmux options](https://hiroppy.github.io/tmux-agent-sidebar/reference/tmux-options/) · [Scripting](https://hiroppy.github.io/tmux-agent-sidebar/reference/scripting/)
-
-## Requirements
-
-- tmux 3.0+
-- [TPM](https://github.com/tmux-plugins/tpm) (or the manual install in [Installation](https://hiroppy.github.io/tmux-agent-sidebar/getting-started/installation/))
-- [GitHub CLI](https://cli.github.com/) (optional — required only for PR numbers in the Git tab)
 
 ## Development
 
