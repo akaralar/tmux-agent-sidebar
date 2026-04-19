@@ -157,10 +157,12 @@ impl AppState {
         } else {
             self.apply_session_snapshot(focused, sessions);
         }
-        if self.sessions.dirty {
-            self.refresh_session_names();
-            self.sessions.dirty = false;
-        }
+        // apply_session_snapshot rebuilds repo_groups from scratch, so
+        // every PaneInfo arrives with an empty session_name. Re-stamp
+        // names from the cached map on every tick, not just when the
+        // background poller delivers a fresh map.
+        self.refresh_session_names();
+        self.sessions.dirty = false;
         self.refresh_activity_data();
         window_active
     }
