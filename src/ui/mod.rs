@@ -31,6 +31,19 @@ pub fn bottom_panel_height_from_tmux() -> u16 {
     bottom_panel_height_from_options(&opts)
 }
 
+/// Read `@sidebar_git` from tmux global options. Returns `false` only when
+/// the value is exactly `"off"`; any other value (including unset) means enabled.
+pub fn git_enabled_from_options(opts: &HashMap<String, String>) -> bool {
+    opts.get("@sidebar_git")
+        .map(|s| s.trim() != "off")
+        .unwrap_or(true)
+}
+
+pub fn git_enabled_from_tmux() -> bool {
+    let opts = crate::tmux::get_all_global_options();
+    git_enabled_from_options(&opts)
+}
+
 // ── public entry point ──────────────────────────────────────────────
 
 pub fn draw(frame: &mut Frame, state: &mut AppState) {

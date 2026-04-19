@@ -84,6 +84,10 @@ fn build_tab_title(state: &AppState) -> Line<'static> {
         Style::default().fg(theme.text_muted)
     };
 
+    if !state.git_enabled {
+        return Line::from(vec![Span::styled("Activity", activity_style)]);
+    }
+
     let git_style = if state.bottom_tab == BottomTab::GitStatus {
         Style::default().fg(theme.accent)
     } else {

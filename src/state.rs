@@ -99,6 +99,10 @@ pub struct AppState {
     /// pane each tick when the map is unchanged (the polling thread only
     /// updates it every 10s).
     pub sessions: SessionNamesState,
+    /// Whether git features (Git tab, background polling, focus-change
+    /// refresh) are enabled. Read once at startup from the
+    /// `@sidebar_git` tmux option.
+    pub git_enabled: bool,
 }
 
 impl AppState {
@@ -126,6 +130,7 @@ impl AppState {
             global: GlobalState::new(),
             bottom_panel_height: crate::ui::BOTTOM_PANEL_HEIGHT,
             sessions: SessionNamesState::new(),
+            git_enabled: true,
         }
     }
 
@@ -740,6 +745,9 @@ impl AppState {
     }
 
     pub fn next_bottom_tab(&mut self) {
+        if !self.git_enabled {
+            return;
+        }
         self.bottom_tab = match self.bottom_tab {
             BottomTab::Activity => BottomTab::GitStatus,
             BottomTab::GitStatus => BottomTab::Activity,
@@ -751,6 +759,9 @@ impl AppState {
     /// The block border starts at col 0, so the title text starts at col 1.
     /// " Activity " spans cols 1..11, "│" at col 11, " Git " spans cols 12..17.
     pub fn handle_bottom_tab_click(&mut self, col: u16) {
+        if !self.git_enabled {
+            return;
+        }
         // Offset by 1 for the left border character
         let x = col.saturating_sub(1) as usize;
         // " Activity " = 10 chars (0..10), "│" = 1 char (10), " Git " = 5 chars (11..16)

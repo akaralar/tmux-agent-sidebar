@@ -84,7 +84,7 @@ pub fn run(
         if sigusr1 || last_refresh.elapsed() >= refresh_interval {
             let previous_focused_pane_id = state.focus_state.focused_pane_id.clone();
             let is_window_active = state.refresh();
-            if state.focus_state.focused_pane_id != previous_focused_pane_id {
+            if state.git_enabled && state.focus_state.focused_pane_id != previous_focused_pane_id {
                 render::refresh_git_for_focused_pane(&mut state);
             }
             needs_redraw = true;
@@ -97,7 +97,9 @@ pub fn run(
             } else {
                 window_inactive_count = window_inactive_count.saturating_add(1);
             }
-            git_tab_active.store(state.bottom_tab == BottomTab::GitStatus, Ordering::Relaxed);
+            if state.git_enabled {
+                git_tab_active.store(state.bottom_tab == BottomTab::GitStatus, Ordering::Relaxed);
+            }
             last_refresh = std::time::Instant::now();
         }
 

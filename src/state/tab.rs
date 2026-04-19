@@ -106,12 +106,18 @@ impl AppState {
             return TabDecision::Keep;
         };
         if let Some(saved) = self.pane_state(cur_id).and_then(|s| s.tab_pref.as_ref()) {
+            // Never restore a GitStatus pref when git is disabled.
+            if !self.git_enabled && *saved == BottomTab::GitStatus {
+                return TabDecision::Set(BottomTab::Activity);
+            }
             TabDecision::Set(saved.clone())
         } else if new_agent_pane_ids.contains(cur_id) || self.focused_pane_is_agent() {
             // The focused pane is an agent, and there's no saved preference yet.
             TabDecision::Set(BottomTab::Activity)
-        } else {
+        } else if self.git_enabled {
             TabDecision::Set(BottomTab::GitStatus)
+        } else {
+            TabDecision::Set(BottomTab::Activity)
         }
     }
 
