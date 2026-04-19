@@ -192,7 +192,15 @@ impl AppState {
         if !self.timers.port_scan_initialized
             || self.timers.last_port_refresh.elapsed() >= PORT_REFRESH_INTERVAL
         {
-            let scanned = crate::port::scan_session_process_snapshot(sessions)?;
+            // On the first scan, skip the expensive `lsof` call so the
+            // sidebar can render its first frame without blocking on TCP
+            // port enumeration (~200-800ms on macOS). Ports will populate
+            // on the next timer tick.
+            let scanned = if !self.timers.port_scan_initialized {
+                crate::port::scan_process_snapshot_fast(sessions)?
+            } else {
+                crate::port::scan_session_process_snapshot(sessions)?
+            };
             let mut updates: Vec<(String, Vec<u16>, Option<String>)> = Vec::new();
             let mut dead_panes: Vec<String> = Vec::new();
             for session in sessions {

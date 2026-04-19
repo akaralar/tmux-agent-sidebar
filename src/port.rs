@@ -201,10 +201,48 @@ fn parse_lsof_listening_ports(lsof_output: &str) -> Vec<(u32, u16)> {
     out
 }
 
-/// Scan per-pane process state for the provided sessions.
-/// The lookup starts from each pane's PID and walks the process tree, so it can
-/// pick up child dev servers spawned by an agent shell and detect when the
-/// agent process itself has exited.
+/// Fast scan: walk the process tree from each pane's PID to determine
+/// liveness and the best command label. Skips the expensive `lsof` call,
+/// so ports will be empty. Use this for the initial startup refresh to
+/// avoid blocking the first frame render.
+pub fn scan_process_snapshot_fast(sessions: &[SessionInfo]) -> Option<PaneProcessSnapshot> {
+    let pane_pids = parse_pane_pids(sessions);
+    if pane_pids.is_empty() {
+        return None;
+    }
+
+    let ps_output = run_command("ps", &["-eo", "pid=,ppid=,comm=,args="])?;
+    let (children_of, info_by_pid) = parse_ps_processes(&ps_output);
+
+    let mut live_agent_panes: HashSet<String> = HashSet::new();
+    let mut command_by_pane: HashMap<String, String> = HashMap::new();
+    for session in sessions {
+        for window in &session.windows {
+            for pane in &window.panes {
+                let Some(&pane_pid) = pane_pids.get(&pane.pane_id) else {
+                    continue;
+                };
+                if process_tree_has_agent(&[pane_pid], &children_of, &info_by_pid, &pane.agent) {
+                    live_agent_panes.insert(pane.pane_id.clone());
+                }
+                if let Some(command) = best_command_for_pane(pane_pid, &children_of, &info_by_pid) {
+                    command_by_pane.insert(pane.pane_id.clone(), command);
+                }
+            }
+        }
+    }
+
+    Some(PaneProcessSnapshot {
+        ports_by_pane: HashMap::new(),
+        command_by_pane,
+        live_agent_panes,
+    })
+}
+
+/// Full scan: process tree walk (liveness + commands) plus `lsof` for
+/// listening TCP ports. This is expensive on macOS (~200-800ms for the
+/// `lsof` call alone) so it should only run on the background timer,
+/// never on the startup path.
 pub fn scan_session_process_snapshot(sessions: &[SessionInfo]) -> Option<PaneProcessSnapshot> {
     let pane_pids = parse_pane_pids(sessions);
     if pane_pids.is_empty() {
