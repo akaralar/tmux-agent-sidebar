@@ -30,7 +30,7 @@ stop → Idle (bg_shells=0)
 
 ### `src/tmux.rs`
 - `PaneStatus` enum に `Background` バリアント追加
-- `from_str`: `"background"` → `Background`
+- `from_label`: `"background"` → `Background`
 - `icon()`: `Background` → `"◎"`
 - `pane_format` に `@pane_bg_shells` フィールド追加
 
